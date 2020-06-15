@@ -1,6 +1,7 @@
 from msa import MSA
 import numpy as np
 
+
 class Transform(object):
     """
     Takes as input a MSA object and allows to transform it. This operation involves
