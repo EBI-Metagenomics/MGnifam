@@ -61,7 +61,7 @@ for i in range(0, num_clusters, batch_size):
     # Define batch path (make temporary directory)
     batch_path = tempfile.mkdtemp()
     # Define set running jobs
-    running = set()
+    running = list()
     # Debug
     print('Running mgseed.pl for all the {} clusters in current batch'.format(
         len(batch_clusters)
@@ -83,16 +83,16 @@ for i in range(0, num_clusters, batch_size):
         # Debug
         print('Retrieved job id: {}'.format(job_id))
         # Save job id
-        running.add(Bjob(id=job_id, status='RUN'))
+        running.append(Bjob(id=job_id, status='RUN'))
 
     # Loop through each job while it is still running
     while running:
         # Get list of running jobs
-        bjobs = list(running)
+        bjobs = sorted(running, key=lambda bjob: bjob.id)
         # Query for job statuses
         is_running = list(map(lambda bjob: bjob.is_running(), bjobs))
         # Update running jobs
-        running = set([bjobs[i] for i in range(len(is_running)) if is_running[i]])
+        running = [bjobs[i] for i in range(len(is_running)) if is_running[i]]
         # Debug
         print('There are {} jobs which are still running:\n{}'.format(
             len(running),  # Number of running jobs
@@ -113,9 +113,9 @@ for i in range(0, num_clusters, batch_size):
     print('check_uniprot.pl:', out)
 
     # Define kept clusters (MGnifam)
-    possible_mgnifam = glob.iglob(batch_path + '/MGYP*')
+    possible_mgnifam = glob.glob(batch_path + '/MGYP*')
     # Define discarded clusters
-    possible_pfam = glob.iglob(batch_path + '/Uniprot/MGYP*')
+    possible_pfam = glob.glob(batch_path + '/Uniprot/MGYP*')
     # Loop through folders not discarded from this batch
     for cluster_path in possible_mgnifam:
         # Move cluster to build folder
