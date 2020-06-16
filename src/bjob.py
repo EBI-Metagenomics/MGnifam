@@ -5,6 +5,7 @@ Handle job submitting to LSF
 
 # Dependencies
 import subprocess
+import time
 import re
 
 
@@ -71,6 +72,39 @@ class Bjob(object):
         return cls(id=id, status='RUN', out_path=out_path, err_path=err_path)
 
     @classmethod
+    def check(cls, bjobs, delay=30):
+        """Check list of jobs
+        Checks the given list of jobs (or a single one) until all are finished
+
+        Args
+        bjobs (list):   List of bjobs whose status must be checked
+        delay (int):    Number of seconds between a check and the other
+        """
+        # Start looping
+        while True:
+            # Get number of jobs
+            n = len(bjobs)
+            # Check status for every job
+            are_running = list(map(lambda bjob: bjob.is_running(), bjobs))
+            # Count running jobs
+            num_running = sum(are_running)
+            # Debug
+            print('There are {} jobs which are still running:\n{}'.format(
+                # Number of running jobs
+                num_running,
+                # Actual ids of running jobs
+                ', '.join([bjobs[i].id for i in range(n) if are_running[i]])
+            ))
+            # Check if at least one process is still running
+            if not num_running:
+                # Debug
+                print('No more running jobs')
+                # Terminate looping
+                break
+            # Wait for given delay
+            time.sleep(delay)
+
+    @classmethod
     def status(cls, job_id):
         # Retrieve command output
         out = subprocess.run(
@@ -105,4 +139,9 @@ class Bjob(object):
         Return
         (str):              Job id, as string (avoids cutting leading zeroes)
         """
-        return str(re.search(r'^Job \<([\d]+)\>', in_string).group(1))
+        # Retrieve job id
+        job_id = str(re.search(r'^Job \<([\d]+)\>', in_string).group(1))
+        # Debug
+        print('Retrieved job id: {}'.format(job_id))
+        # Return retrieved job id
+        return job_id

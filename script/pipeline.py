@@ -60,13 +60,13 @@ for i in range(0, num_clusters, batch_size):
     batch_clusters = in_clusters[i:min(i+batch_size, num_clusters)]
     # Define batch path (make temporary directory)
     batch_path = tempfile.mkdtemp()
-    # Define set running jobs
-    running = list()
     # Debug
     print('Running mgseed.pl for all the {} clusters in current batch'.format(
         len(batch_clusters)
     ))
 
+    # Initialize set of running jobs
+    bjobs = list()
     # Loop through each cluster in current batch
     for cluster_name in batch_clusters:
         # Run mgseed.pl in current batch directory
@@ -80,26 +80,65 @@ for i in range(0, num_clusters, batch_size):
         print('mgseed.pl:', out)
         # Get process id as string
         job_id = Bjob.id_from_string(out.stdout)
-        # Debug
-        print('Retrieved job id: {}'.format(job_id))
         # Save job id
-        running.append(Bjob(id=job_id, status='RUN'))
+        bjobs.append(Bjob(id=job_id, status='RUN'))
 
-    # Loop through each job while it is still running
-    while running:
-        # Get list of running jobs
-        bjobs = sorted(running, key=lambda bjob: bjob.id)
-        # Query for job statuses
-        is_running = list(map(lambda bjob: bjob.is_running(), bjobs))
-        # Update running jobs
-        running = [bjobs[i] for i in range(len(is_running)) if is_running[i]]
+    # Check running mgseed.pl jobs
+    Bjob.check(bjobs, delay=30)
+
+    # # Check running mgseed.pl jobs
+    # while running:
+    #     # Get list of running jobs
+    #     bjobs = sorted(running, key=lambda bjob: bjob.id)
+    #     # Query for job statuses
+    #     is_running = list(map(lambda bjob: bjob.is_running(), bjobs))
+    #     # Update running jobs
+    #     running = [bjobs[i] for i in range(len(is_running)) if is_running[i]]
+    #     # Debug
+    #     print('There are {} jobs which are still running:\n{}'.format(
+    #         len(running),  # Number of running jobs
+    #         ', '.join([job.id for job in running])  # Actual ids of running jobs
+    #     ))
+    #     # Set some delay (30 sec)
+    #     time.sleep(30)
+
+    # Define set of running jobs
+    bjobs = list()
+    # Retrieve cluster paths
+    cluster_paths = glob.glob(batch_path + '/MGYP*')
+    # Run pfbuild for every cluster in batch
+    for cluster_path in cluster_paths:
+        # Run pfbuild current cluster directory
+        out = subprocess.run(
+            capture_output=True,  # Capture console output
+            encoding='utf-8',  # Set output encoding
+            cwd=cluster_path,  # Set directory
+            args=['pfbuild', '-withpfmake', '-db', 'uniprot']
+        )
         # Debug
-        print('There are {} jobs which are still running:\n{}'.format(
-            len(running),  # Number of running jobs
-            ', '.join([job.id for job in running])  # Actual ids of running jobs
-        ))
-        # Set some delay (30 sec)
-        time.sleep(30)
+        print('pfbuild:', out)
+        # Get process id as string
+        job_id = Bjob.id_from_string(out.stdout)
+        # Save job id
+        bjobs.append(Bjob(id=job_id, status='RUN'))
+
+    # Check running pfbuild jobs
+    Bjob.check(bjobs, delay=30)
+    # # Check running pfbuild jobs
+    # while running:
+    #     # Get list of running jobs
+    #     bjobs = sorted(running, key=lambda bjob: bjob.id)
+    #     # Query for job statuses
+    #     is_running = list(map(lambda bjob: bjob.is_running(), bjobs))
+    #     # Update running jobs
+    #     running = [bjobs[i] for i in range(len(is_running)) if is_running[i]]
+    #     # Debug
+    #     print('There are {} jobs which are still running:\n{}'.format(
+    #         len(running),  # Number of running jobs
+    #         ', '.join([job.id for job in running])  # Actual ids of running jobs
+    #     ))
+    #     # Set some delay (30 sec)
+    #     time.sleep(30)
 
     # Run check_uniprot.pl in current batch directory
     out = subprocess.run(
@@ -113,33 +152,45 @@ for i in range(0, num_clusters, batch_size):
     print('check_uniprot.pl:', out)
 
     # Define kept clusters (MGnifam)
-    possible_mgnifam = glob.glob(batch_path + '/MGYP*')
+    kept_clusters = glob.glob(batch_path + '/MGYP*')
     # Define discarded clusters
-    possible_pfam = glob.glob(batch_path + '/Uniprot/MGYP*')
+    bias_clusters = glob.glob(batch_path + '/BIAS/MGYP*')
+    uni_clusters = glob.glob(batch_path + '/Uniprot/MGYP*')
     # Loop through folders not discarded from this batch
-    for cluster_path in possible_mgnifam:
+    for cluster_path in kept_clusters:
         # Move cluster to build folder
         shutil.move(cluster_path, build_path)
         # Debug
         print('Moved {} to {}'.format(cluster_path, build_path))
     # Debug
-    print('There are {:d} ({:.03f}%) possible MGnifam clusters\n{}'.format(
+    print('There are {:d} ({:.03f}%) possible MGnifam clusters: {}'.format(
         # Number of possible MGnifam
-        len(possible_mgnifam),
+        len(kept_clusters),
         # Rate of possible MGnifam clusters
-        len(possible_mgnifam) / (len(possible_mgnifam) + len(possible_pfam)),
+        len(kept_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
         # List all possible MGnifam
-        ', '.join(os.path.basename(path) for path in possible_mgnifam)
+        ', '.join(os.path.basename(path) for path in kept_clusters)
     ))
     # Debug
-    print('There are {:d} ({:.03f}%) possible Pfam clusters\n{}'.format(
+    print('There are {:d} ({:.03f}%) clusters in BIAS: {}'.format(
         # Number of possible Pfam
-        len(possible_pfam),
+        len(bias_clusters),
         # Rate of possible Pfam clusters
-        len(possible_pfam) / (len(possible_mgnifam) + len(possible_pfam)),
+        len(bias_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
         # List all possible Pfam
-        ', '.join(os.path.basename(path) for path in possible_pfam)
+        ', '.join(os.path.basename(path) for path in bias_clusters)
+    ))
+    # Debug
+    print('There are {:d} ({:.03f}%) clusters in Uniprot: {}'.format(
+        # Number of possible Pfam
+        len(uni_clusters),
+        # Rate of possible Pfam clusters
+        len(uni_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
+        # List all possible Pfam
+        ', '.join(os.path.basename(path) for path in uni_clusters)
     ))
 
-    # Use out folder as build folder
-    shutil.move(build_path, out_dir)
+# Loop through each remaining cluster
+for cluster_path in glob.glob(build_path + '/MGYP*'):
+    # Put cluster in output directory
+    shutil.move(cluster_path, out_dir)
