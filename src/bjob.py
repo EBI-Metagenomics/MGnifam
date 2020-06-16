@@ -22,8 +22,22 @@ class Bjob(object):
         Return
         (str)   Job status, which can be 'RUN', 'PEND', 'DONE', 'EXIT'
         """
-        # Return retrieved status
+        # If not running, return current status
+        if self.status not in set(['RUN', 'PEND']):
+            return self.status
+        # Otherwise, retrieve status using bjobs
         return self.__class__.status(self.id)
+
+    def is_running(self):
+        """Define if current job is running
+        
+        Return
+        (bool)  Whether job is running or not
+        """
+        # Get current job status
+        status = self.get_status()
+        # Return bool if status is running or pending
+        return (status in set(['RUN', 'PEND']))
 
     @classmethod
     def run(cls, args, out_path='/dev/null', err_path='/dev/null', **kwargs):

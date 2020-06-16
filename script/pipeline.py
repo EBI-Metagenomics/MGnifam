@@ -56,7 +56,7 @@ for i in range(0, num_clusters, batch_size):
     batch_clusters = in_clusters[i:min(i+batch_size, num_clusters)]
     # Define batch path (make temporary directory)
     batch_path = tempfile.mkdtemp()
-    # Define set running jobs id
+    # Define set running jobs
     running = set()
     # Debug
     print('Running mgseed.pl for all the {} clusters in current batch'.format(
@@ -79,24 +79,20 @@ for i in range(0, num_clusters, batch_size):
         # Debug
         print('Retrieved job id: {}'.format(job_id))
         # Save job id
-        running.add(job_id)
+        running.add(Bjob(id=job_id, status='RUN'))
 
     # Loop through each job while it is still running
     while running:
-        # Parse job ids to list
-        ids = list(running)
+        # Get list of running jobs
+        bjobs = list(running)
         # Query for job statuses
-        status = list(map(lambda job_id: Bjob.status(job_id), ids))
-        # Get number of jobs
-        n = len(status)
-        # Update running job ids
-        running = set([
-            ids[i] for i in range(n) if (status[i] in set(['RUN', 'PEND']))
-        ])
+        is_running = list(map(lambda bjob: bjob.is_running(), bjobs))
+        # Update running jobs
+        running = set([bjobs[i] for i in range(len(is_running)) if is_running[i]])
         # Debug
         print('There are {} jobs which are still running:\n{}'.format(
             len(running),  # Number of running jobs
-            running  # Actual ids of running jobs
+            ', '.join([job.id for job in running])  # Actual ids of running jobs
         ))
         # Set some delay (30 sec)
         time.sleep(30)
