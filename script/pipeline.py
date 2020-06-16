@@ -1,16 +1,23 @@
-# # Custom dependencies
-# from ..src.msa import MSA
+# Common dependencies
+import numpy as np
+import subprocess
+import argparse
+import tempfile
+import time
+import sys
+import os
+import re
+
+# Updating python path
+sys.path.append(os.path.dirname(os.path.realpath(__file__) + '/..'))
+
+# Custom dependencies
+from src.msa import MSA
+from src.bjob import Bjob
 # from ..src.transform import Compose
 # from ..src.transform import OccupancyTrim
 # from ..src.transform import OccupancyFilter
 # from ..src.transform import MakeNonRedundant
-
-# Common dependencies
-import subprocess
-import argparse
-import tempfile
-import os
-import re
 
 
 # Read arguments
@@ -38,14 +45,24 @@ in_clusters = args.in_clusters
 num_clusters = len(in_clusters)
 # Get batch size
 batch_size = args.batch_size
-# Define number of batches
-num_batches = 1 + (num_clusters // batch_size)
-# Run Mgseed.pl for each batch of clusters
-for i in range(0, num_batches):
+# # Define index of last batch
+# last_batch = (num_clusters // batch_size)
+# # Define number of batches
+# num_batches = 1 + last_batch
+
+# Run mgseed.pl for each batch of clusters
+for i in range(0, num_clusters, batch_size):
     # Get current batch of cluster names
-    batch_clusters = in_clusters[(i*batch_size):min((i+1)*batch_size, num_clusters)]
+    batch_clusters = in_clusters[i:min(i+batch_size, num_clusters)]
     # Define batch path (make temporary directory)
     batch_path = tempfile.mkdtemp()
+    # Define set running jobs id
+    running = set()
+    # Debug
+    print('Running mgseed.pl for all the {} clusters in current batch'.fromat(
+        len(batch_clusters)
+    ))
+
     # Loop through each cluster in current batch
     for cluster_name in batch_clusters:
         # Run mgseed.pl in current batch directory
@@ -56,5 +73,41 @@ for i in range(0, num_batches):
             args=['mgseed.pl', '-cluster', cluster_name]
         )
         # Debug
-        print(out)
-    # TODO Run check_uniprot.pl in current batch directory
+        print('mgseed.pl:\n', out)
+        # Get process id as string
+        job_id = Bjob.id_from_string(out.stdout)
+        # Debug
+        print('Retrieved job id: {}'.format(job_id))
+        # Save job id
+        running.add(job_id)
+
+    # Loop through each job while it is still running
+    while running:
+        # Parse job ids to list
+        ids = list(running)
+        # Query for job statuses
+        status = map(lambda job_id: Bjob.status(job_id), ids)
+        # Get number of jobs
+        n = len(status)
+        # Update running job ids
+        running = set([
+            ids[i] for i in range(n) if (status[i] in set('RUN', 'PEND'))
+        ])
+        # Debug
+        print('There are {} jobs which are still running:\n{}'.fromat(
+            len(running),  # Number of running jobs
+            running  # Actual ids of running jobs
+        ))
+        # Set some delay (30 sec)
+        time.sleep(30)
+
+    # Run check_uniprot.pl in current batch directory
+    out = subprocess.run(
+        capture_output=True,
+        encoding='utf-8',
+        cwd=batch_path,
+        args=[
+            'check_uniprot.pl'
+        ])
+    # Debug
+    print('check_uniprot.pl:\n', out)
