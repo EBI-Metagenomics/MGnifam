@@ -33,14 +33,17 @@ class Bjob(object):
         out = subprocess.run(
             capture_output=True,
             encoding='utf-8',
-            args=['bjob', '-noheader', '-a', job_id]
+            check=True,
+            args=['bjobs', '-noheader', '-a', job_id]
         )
+        # Debug
+        print('bjobs (status):', out)
         # Split output
-        out = re.search(r'[ \t]+', ' ', out).split(' ')
+        out = re.sub(r'[ \t]+', ' ', out.stdout).split(' ')
         # Retrieve status as string
         status = str(out[2])
         # Check status value
-        if status not in set('RUN', 'PEND', 'DONE', 'EXIT'):
+        if status not in set(['RUN', 'PEND', 'DONE', 'EXIT']):
             raise ValueError('Unable to parse status command')
         # Return retrieved status
         return status

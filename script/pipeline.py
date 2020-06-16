@@ -9,7 +9,7 @@ import os
 import re
 
 # Updating python path
-sys.append(os.path.dirname(os.path.realpath(__file__) + '/..'))
+sys.path.append(os.path.dirname(os.path.realpath(__file__) + '/..'))
 
 # Custom dependencies
 from src.msa import MSA
@@ -59,7 +59,7 @@ for i in range(0, num_clusters, batch_size):
     # Define set running jobs id
     running = set()
     # Debug
-    print('Running mgseed.pl for all the {} clusters in current batch'.fromat(
+    print('Running mgseed.pl for all the {} clusters in current batch'.format(
         len(batch_clusters)
     ))
 
@@ -73,7 +73,7 @@ for i in range(0, num_clusters, batch_size):
             args=['mgseed.pl', '-cluster', cluster_name]
         )
         # Debug
-        print('mgseed.pl:\n', out)
+        print('mgseed.pl:', out)
         # Get process id as string
         job_id = Bjob.id_from_string(out.stdout)
         # Debug
@@ -86,15 +86,15 @@ for i in range(0, num_clusters, batch_size):
         # Parse job ids to list
         ids = list(running)
         # Query for job statuses
-        status = map(lambda job_id: Bjob.status(job_id), ids)
+        status = list(map(lambda job_id: Bjob.status(job_id), ids))
         # Get number of jobs
         n = len(status)
         # Update running job ids
         running = set([
-            ids[i] for i in range(n) if (status[i] in set('RUN', 'PEND'))
+            ids[i] for i in range(n) if (status[i] in set(['RUN', 'PEND']))
         ])
         # Debug
-        print('There are {} jobs which are still running:\n{}'.fromat(
+        print('There are {} jobs which are still running:\n{}'.format(
             len(running),  # Number of running jobs
             running  # Actual ids of running jobs
         ))
@@ -110,4 +110,4 @@ for i in range(0, num_clusters, batch_size):
             'check_uniprot.pl'
         ])
     # Debug
-    print('check_uniprot.pl:\n', out)
+    print('check_uniprot.pl:', out)
