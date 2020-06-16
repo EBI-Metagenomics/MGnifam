@@ -3,6 +3,8 @@ import numpy as np
 import subprocess
 import argparse
 import tempfile
+import shutil
+import glob
 import time
 import sys
 import os
@@ -45,6 +47,8 @@ in_clusters = args.in_clusters
 num_clusters = len(in_clusters)
 # Get batch size
 batch_size = args.batch_size
+# Define temporary build directory
+build_path = tempfile.mkdtemp()
 # # Define index of last batch
 # last_batch = (num_clusters // batch_size)
 # # Define number of batches
@@ -107,3 +111,35 @@ for i in range(0, num_clusters, batch_size):
         ])
     # Debug
     print('check_uniprot.pl:', out)
+
+    # Define kept clusters (MGnifam)
+    possible_mgnifam = glob.iglob(batch_path + '/MGYP*')
+    # Define discarded clusters
+    possible_pfam = glob.iglob(batch_path + '/Uniprot/MGYP*')
+    # Loop through folders not discarded from this batch
+    for cluster_path in possible_mgnifam:
+        # Move cluster to build folder
+        shutil.move(cluster_path, build_path)
+        # Debug
+        print('Moved {} to {}'.format(cluster_path, build_path))
+    # Debug
+    print('There are {:d} ({:.03f}%) possible MGnifam clusters\n{}'.format(
+        # Number of possible MGnifam
+        len(possible_mgnifam),
+        # Rate of possible MGnifam clusters
+        len(possible_mgnifam) / (len(possible_mgnifam) + len(possible_pfam)),
+        # List all possible MGnifam
+        ', '.join(os.path.basename(path) for path in possible_mgnifam)
+    ))
+    # Debug
+    print('There are {:d} ({:.03f}%) possible Pfam clusters\n{}'.format(
+        # Number of possible Pfam
+        len(possible_pfam),
+        # Rate of possible Pfam clusters
+        len(possible_pfam) / (len(possible_mgnifam) + len(possible_pfam)),
+        # List all possible Pfam
+        ', '.join(os.path.basename(path) for path in possible_pfam)
+    ))
+
+    # Use out folder as build folder
+    shutil.move(build_path, out_dir)

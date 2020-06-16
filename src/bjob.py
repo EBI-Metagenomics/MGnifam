@@ -30,7 +30,7 @@ class Bjob(object):
 
     def is_running(self):
         """Define if current job is running
-        
+
         Return
         (bool)  Whether job is running or not
         """
@@ -64,7 +64,7 @@ class Bjob(object):
             args=args  # bsub arguments
         )
         # Debug
-        print('bsub:', out)
+        print('bjobs (submit):', out)
         # Retrieve job id
         id = cls.id_from_string(out.stdout)
         # Return retrieved Bjob instance with give job id
