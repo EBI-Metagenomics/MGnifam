@@ -61,12 +61,15 @@ for i in range(0, num_clusters, batch_size):
     # Define batch path (make temporary directory)
     batch_path = tempfile.mkdtemp()
     # Debug
-    print('Running mgseed.pl for all the {} clusters in current batch'.format(
-        len(batch_clusters)
+    print('Running mgseed.pl for all the {} clusters in batch {}'.format(
+        len(batch_clusters),  # Number of clusters
+        batch_path  # Current batch path
     ))
 
     # Initialize set of running jobs
     bjobs = list()
+    # Debug
+    print('Clusters for mgseed:\n{}'.format('\n'.join(batch_clusters)))
     # Loop through each cluster in current batch
     for cluster_name in batch_clusters:
         # Run mgseed.pl in current batch directory
@@ -85,6 +88,10 @@ for i in range(0, num_clusters, batch_size):
 
     # Check running mgseed.pl jobs
     Bjob.check(bjobs, delay=30)
+
+    # Debug
+    shutil.move(batch_path, out_dir)  # Retrieve batch directory
+    sys.exit(0)  # Exit script
 
     # # Check running mgseed.pl jobs
     # while running:
@@ -106,6 +113,8 @@ for i in range(0, num_clusters, batch_size):
     bjobs = list()
     # Retrieve cluster paths
     cluster_paths = glob.glob(batch_path + '/MGYP*')
+    # Debug
+    print('Clusters for pfbuild:\n{}'.format('\n'.join(cluster_paths)))
     # Run pfbuild for every cluster in batch
     for cluster_path in cluster_paths:
         # Run pfbuild current cluster directory
