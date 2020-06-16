@@ -10,9 +10,11 @@ import re
 
 class Bjob(object):
 
-    def __init__(self, id=None, status=None):
+    def __init__(self, id=None, status=None, out_path='/dev/null', err_path='/dev/null'):
         self.id = id
         self.status = status
+        self.out_path = out_path
+        self.err_path = err_path
 
     def get_status(self):
         """Retrieve job status
@@ -24,8 +26,35 @@ class Bjob(object):
         return self.__class__.status(self.id)
 
     @classmethod
-    def run(cls, *args, **kwargs):
-        raise NotImplementedError
+    def run(cls, args, out_path='/dev/null', err_path='/dev/null', **kwargs):
+        """Run a job
+        Run a job by submitting it to LSF scheduler: this method takes as input
+        subprocess arguments and feeds them to bsub command, along with other
+        optional arguments
+
+        Args
+        args (list):    List of arguments, such as subprecess args
+        out_path (str): Path to output log file
+        err_path (str): Path to error log file
+
+        Return
+        (Bjob):         Instance of generated bjob
+        """
+        # Reformat code to make it run on LSF
+        args = ['bsub', '-o', out_path, '-e', err_path] + args
+        # Run command on LSF
+        out = subprocess.run(
+            capture_output=True,  # Retain output
+            encoding='utf-8',  # Encoding
+            check=True,  # Check execution
+            args=args  # bsub arguments
+        )
+        # Debug
+        print('bsub:', out)
+        # Retrieve job id
+        id = cls.id_from_string(out.stdout)
+        # Return retrieved Bjob instance with give job id
+        return cls(id=id, status='RUN', out_path=out_path, err_path=err_path)
 
     @classmethod
     def status(cls, job_id):
