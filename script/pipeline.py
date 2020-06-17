@@ -45,12 +45,43 @@ in_clusters = args.in_clusters
 num_clusters = len(in_clusters)
 # Get batch size
 batch_size = args.batch_size
-# Define temporary build directory
-build_path = tempfile.mkdtemp()
+# Define build directory
+build_path = out_dir + '/build'
+# Make build directory
+os.mkdir(build_path)
 # # Define index of last batch
 # last_batch = (num_clusters // batch_size)
 # # Define number of batches
 # num_batches = 1 + last_batch
+
+# Get current environment
+env = os.environ.copy()
+# Setup local environment
+env = {**env, **{
+    'PATH': ':'.join([
+        "/nfs/production/metagenomics/mgnifams/dclementel/Pfam/PfamScripts/make",
+        "/nfs/production/xfam/pfam/software/bin",
+        "/nfs/production/metagenomics/mgnifams/dclementel/Pfam/PfamScripts/mgnifam",
+        "/usr/lib64/qt-3.3/bin",
+        "/ebi/lsf/ebi/ppm/10.2/bin",
+        "/ebi/lsf/ebi/ppm/10.2/linux2.6-glibc2.3-x86_64/bin",
+        "/ebi/lsf/ebi/10.1/linux3.10-glibc2.17-x86_64/etc",
+        "/ebi/lsf/ebi/10.1/linux3.10-glibc2.17-x86_64/bin",
+        "/usr/lpp/mmfs/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/usr/local/sbin",
+        "/usr/sbin",
+        "/bin",
+        "/usr/bin",
+        "/homes/dclementel/bin"
+    ]),
+    'PYTHONPATH': ':'.join([
+        '/ebi/sp/pro1/interpro/python-modules/lib64/python',
+        '/ebi/sp/pro1/interpro/python-modules/lib/python'
+    ])
+}}
+
 
 # Run mgseed.pl for each batch of clusters
 for i in range(0, num_clusters, batch_size):
@@ -74,6 +105,7 @@ for i in range(0, num_clusters, batch_size):
         out = subprocess.run(
             capture_output=True,  # Capture console output
             encoding='utf-8',  # Set output encoding
+            env=env,
             cwd=batch_path,  # Set directory
             args=['mgseed.pl', '-cluster', cluster_name]
         )
@@ -117,9 +149,8 @@ for i in range(0, num_clusters, batch_size):
         capture_output=True,
         encoding='utf-8',
         cwd=batch_path,
-        args=[
-            'check_uniprot.pl'
-        ])
+        args=['check_uniprot.pl']
+    )
     # Debug
     print('check_uniprot.pl:', out)
 
@@ -138,7 +169,7 @@ for i in range(0, num_clusters, batch_size):
         # Debug
         print('Moved {} to {}'.format(cluster_path, build_path))
     # Debug
-    print('There are {:d} ({:.03f}%) possible MGnifam clusters: {}'.format(
+    print('There are {:d} ({:.03f}%) possible kept clusters: {}'.format(
         # Number of possible MGnifam
         len(kept_clusters),
         # Rate of possible MGnifam clusters
