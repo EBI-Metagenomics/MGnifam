@@ -1,11 +1,9 @@
 # Common dependencies
-import numpy as np
 import subprocess
 import argparse
 import tempfile
 import shutil
 import glob
-import time
 import sys
 import os
 import re
@@ -59,17 +57,17 @@ for i in range(0, num_clusters, batch_size):
     # Get current batch of cluster names
     batch_clusters = in_clusters[i:min(i+batch_size, num_clusters)]
     # Define batch path (make temporary directory)
-    batch_path = tempfile.mkdtemp()
+    batch_path = out_dir + '/batch_{}'.format(i // batch_size)
+    # Make batch directory
+    os.mkdir(batch_path)
+
+    # Initialize set of running jobs
+    bjobs = list()
     # Debug
     print('Running mgseed.pl for all the {} clusters in batch {}'.format(
         len(batch_clusters),  # Number of clusters
         batch_path  # Current batch path
     ))
-
-    # Initialize set of running jobs
-    bjobs = list()
-    # Debug
-    print('Clusters for mgseed:\n{}'.format('\n'.join(batch_clusters)))
     # Loop through each cluster in current batch
     for cluster_name in batch_clusters:
         # Run mgseed.pl in current batch directory
@@ -88,26 +86,6 @@ for i in range(0, num_clusters, batch_size):
 
     # Check running mgseed.pl jobs
     Bjob.check(bjobs, delay=30)
-
-    # Debug
-    shutil.move(batch_path, out_dir)  # Retrieve batch directory
-    sys.exit(0)  # Exit script
-
-    # # Check running mgseed.pl jobs
-    # while running:
-    #     # Get list of running jobs
-    #     bjobs = sorted(running, key=lambda bjob: bjob.id)
-    #     # Query for job statuses
-    #     is_running = list(map(lambda bjob: bjob.is_running(), bjobs))
-    #     # Update running jobs
-    #     running = [bjobs[i] for i in range(len(is_running)) if is_running[i]]
-    #     # Debug
-    #     print('There are {} jobs which are still running:\n{}'.format(
-    #         len(running),  # Number of running jobs
-    #         ', '.join([job.id for job in running])  # Actual ids of running jobs
-    #     ))
-    #     # Set some delay (30 sec)
-    #     time.sleep(30)
 
     # Define set of running jobs
     bjobs = list()
@@ -133,21 +111,6 @@ for i in range(0, num_clusters, batch_size):
 
     # Check running pfbuild jobs
     Bjob.check(bjobs, delay=30)
-    # # Check running pfbuild jobs
-    # while running:
-    #     # Get list of running jobs
-    #     bjobs = sorted(running, key=lambda bjob: bjob.id)
-    #     # Query for job statuses
-    #     is_running = list(map(lambda bjob: bjob.is_running(), bjobs))
-    #     # Update running jobs
-    #     running = [bjobs[i] for i in range(len(is_running)) if is_running[i]]
-    #     # Debug
-    #     print('There are {} jobs which are still running:\n{}'.format(
-    #         len(running),  # Number of running jobs
-    #         ', '.join([job.id for job in running])  # Actual ids of running jobs
-    #     ))
-    #     # Set some delay (30 sec)
-    #     time.sleep(30)
 
     # Run check_uniprot.pl in current batch directory
     out = subprocess.run(
@@ -167,8 +130,11 @@ for i in range(0, num_clusters, batch_size):
     uni_clusters = glob.glob(batch_path + '/Uniprot/MGYP*')
     # Loop through folders not discarded from this batch
     for cluster_path in kept_clusters:
+        # Get cluster name
+        cluster_name = os.path.basename(cluster_path)
+        cluster_name = os.path.dirname(cluster_name)
         # Move cluster to build folder
-        shutil.move(cluster_path, build_path)
+        shutil.move(cluster_path, build_path + '/' + cluster_name)
         # Debug
         print('Moved {} to {}'.format(cluster_path, build_path))
     # Debug
@@ -198,8 +164,3 @@ for i in range(0, num_clusters, batch_size):
         # List all possible Pfam
         ', '.join(os.path.basename(path) for path in uni_clusters)
     ))
-
-# Loop through each remaining cluster
-for cluster_path in glob.glob(build_path + '/MGYP*'):
-    # Put cluster in output directory
-    shutil.move(cluster_path, out_dir)
