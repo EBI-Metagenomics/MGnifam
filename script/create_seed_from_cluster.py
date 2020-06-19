@@ -33,7 +33,7 @@ def read_tsv(in_path):
     return pd.read_csv(
         in_path,  # Path to chunk
         sep='\t',
-        usecol=[0, 1],
+        usecols=[0, 1],
         names=['cluster_name', 'sequence_acc'],
         compression='infer'
     )
@@ -64,45 +64,45 @@ if is_gzip:
 
 # Define temporary directory where to store chunks
 cluster_dir = './tmp/clusters'
-# Make cluster directory
-os.makedirs(cluster_dir, exist_ok=True)
-# Define number of rows per chunk
-batch_size = int(1e08)
-# Open input file
-with file_handler(in_path) as in_file:
-    # Intialize chunk
-    curr_chunk = None
-    # Intialize line counter
-    curr_line = 0
-    # Loop through each input file line
-    for line in tqdm(in_file):
-        # Match values on each row
-        found = re.search(r'^([a-zA-Z0-9]+)\t([a-zA-Z0-9]+)', line)
-        # Skip iteration if values not matching
-        if not found:
-            continue
-        # Check if current line is at the beginning of a new batch
-        if not (curr_line % batch_size):
-            # Eventually close previous chunk
-            if curr_chunk:
-                curr_chunk.close()
-            # Create new chunk path
-            chunk_path = '{:s}/chunk{:d}.tsv.gz'.format(
-                cluster_dir,  # Directory where chunk will be stored
-                curr_line // batch_size  # Number of chunk stored
-            )
-            # Open new chunk
-            curr_chunk = gzip.open(chunk_path, 'wt')
-        # Get values as cluster name and sequence accession
-        cluster_name, sequence_acc = found.group(1), found.group(2)
-        # Append to list of sequences
-        curr_chunk.write('{:s}\t{:s}\n'.format(cluster_name, sequence_acc))
-        # Update line counter
-        curr_line += 1
-    # Close last opened chunk
-    curr_chunk.close()
+# # Make cluster directory
+# os.makedirs(cluster_dir, exist_ok=True)
+# # Define number of rows per chunk
+# batch_size = int(1e08)
+# # Open input file
+# with file_handler(in_path) as in_file:
+#     # Intialize chunk
+#     curr_chunk = None
+#     # Intialize line counter
+#     curr_line = 0
+#     # Loop through each input file line
+#     for line in tqdm(in_file):
+#         # # Match values on each row
+#         # found = re.search(r'^([a-zA-Z0-9]+)\t([a-zA-Z0-9]+)', line)
+#         # # Skip iteration if values not matching
+#         # if not found:
+#         #     continue
+#         # Check if current line is at the beginning of a new batch
+#         if not (curr_line % batch_size):
+#             # Eventually close previous chunk
+#             if curr_chunk:
+#                 curr_chunk.close()
+#             # Create new chunk path
+#             chunk_path = '{:s}/chunk{:d}.tsv.gz'.format(
+#                 cluster_dir,  # Directory where chunk will be stored
+#                 curr_line // batch_size  # Number of chunk stored
+#             )
+#             # Open new chunk
+#             curr_chunk = gzip.open(chunk_path, 'wt')
+#         # # Get values as cluster name and sequence accession
+#         # cluster_name, sequence_acc = found.group(1), found.group(2)
+#         # Append to list of sequences
+#         curr_chunk.write(line)
+#         # Update line counter
+#         curr_line += 1
+#     # Close last opened chunk
+#     curr_chunk.close()
 
 # Create a list of lazy functions ready to return a pandas.DataFrame
-dfs = [delayed(read_tsv)(path) for path in glob.glob(cluster_dir + '/chunk*')]
+dfs = [delayed(read_tsv)(path) for path in glob.glob(cluster_dir + '/chunk*.tsv.gz')]
 # Using delayed, assemble the pandas.DataFrames into a dask.DataFrame
 ddf = dd.from_delayed(dfs)
