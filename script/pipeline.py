@@ -262,7 +262,7 @@ for j in range(len(in_clusters)):
     # Check if number of iterated clusters has been reached
     if i >= num_clusters:
         # Break execution
-        break;
+        break
 # Check if there is at least one cluster in last batch
 if batch_clusters:
     # Run pipeline for last cluster, if any
@@ -270,7 +270,7 @@ if batch_clusters:
         # Stored batch of clusters
         batch_clusters,
         # Path to current batch
-        batch_path=out_dir + '/batch{:d}'.format(i // batch_size),
+        batch_path=out_dir + '/batch{:d}'.format((i // batch_size) + 1),
         # Environmental variables
         env=env
     )

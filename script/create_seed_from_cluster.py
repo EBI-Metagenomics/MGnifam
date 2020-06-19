@@ -18,37 +18,70 @@ current sequence alignment
 # Dependencies
 from dask_jobqueue import LSFCluster
 from dask.distributed import Client
-from dask.delayed import delayed
-import dask.dataframe as dd
-import pandas as pd
-from tqdm import tqdm
+from dask.distributed import progress
+# from dask.delayed import delayed
+# import dask.dataframe as dd
+# import pandas as pd
+# from tqdm import tqdm
 import gzip
 import glob
 import re
 import os
 
 
-# Load clusters as pandas dataframe
-def read_tsv(in_path):
-    return pd.read_csv(
-        in_path,  # Path to chunk
-        sep='\t',
-        usecols=[0, 1],
-        names=['cluster_name', 'sequence_acc'],
-        compression='infer'
-    )
+# # Load clusters as pandas dataframe
+# def read_tsv(in_path):
+#     # Debug
+#     print('Reading ', in_path)
+#     # Make and return dataframe
+#     return pd.read_csv(
+#         in_path,  # Path to chunk
+#         sep='\t',
+#         usecols=[0, 1],
+#         names=['cluster_name', 'sequence_acc'],
+#         compression='infer'
+#     )
 
+# Get cluster entries from chunk
+def get_sequences(in_name, in_path):
+    # Dependencies
+    import gzip
+    import re
+    # Get cluster entries
+    sequences = list()
+    # Unzip
+    with gzip.open(in_path, 'rt') as in_file:
+        # Loop through every line in file
+        for line in in_file:
+            # Search entries in text line
+            found = re.search(r'^([a-zA-Z0-9]+)[ \t]+([a-zA-Z0-9]+)', line)
+            # Case line does not match format
+            if not found:
+                # Skip iteration
+                continue
+            # Get cluster name and sequence accession
+            cluster_name, sequence_acc = found.group(1), found.group(2)
+            # Case current cluster name matches the input one
+            if cluster_name == in_name:
+                # Store entry
+                sequences.append((cluster_name, sequence_acc))
+    # Return entries found
+    return sequences
 
 # TODO Read cluster from input path
 # Define path to clusters gzipped file (formatted as <cluster name>\t<seq acc>)
 CLUSTER_PATH = '/nfs/production/xfam/pfam/jaina/MGnify_clusters/2019_05/clusters/mgy_seqs.cluster.tsv.gz'
 
 # Create new cluster instance
-cluster = LSFCluster(cores=2, memory='2GB', use_stdin=True)
-# Ask for maximim 12 jobs
-cluster.adapt(maximum_jobs=12)
+cluster = LSFCluster(cores=1, memory='2GB', use_stdin=True)
+# Require 12 jobs
+cluster.scale(12)
 # Create new client instance (interacts job scheduler)
 client = Client(cluster)
+
+# Debug
+print('Cluster', cluster)
+print('Client', client)
 
 # Get input path
 in_path = CLUSTER_PATH
@@ -102,7 +135,27 @@ cluster_dir = './tmp/clusters'
 #     # Close last opened chunk
 #     curr_chunk.close()
 
-# Create a list of lazy functions ready to return a pandas.DataFrame
-dfs = [delayed(read_tsv)(path) for path in glob.glob(cluster_dir + '/chunk*.tsv.gz')]
-# Using delayed, assemble the pandas.DataFrames into a dask.DataFrame
-ddf = dd.from_delayed(dfs)
+
+# Define a set of futures
+futures = client.map(
+    # Function that searches for cluster MGYP000853368667
+    lambda in_path: get_sequences(in_path=in_path, in_name='MGYP000853368667'),
+    # Chunks
+    glob.glob(cluster_dir + '/chunk*.tsv.gz')
+)
+# Check progress
+progress(futures)
+# Wait for results
+sequences = futures.result()
+# Concatenate retrieved lists into a single list
+sequences = [
+    sequences[i][j]
+    for i in range(len(sequences))
+    for j in range(len(sequences[i]))
+]
+# Debug
+print('Retrieved sequences', sequences)
+# # Create a list of lazy functions ready to return a pandas.DataFrame
+# dfs = [delayed(read_tsv)(path) for path in glob.glob(cluster_dir + '/chunk*.tsv.gz')]
+# # Using delayed, assemble the pandas.DataFrames into a dask.DataFrame
+# ddf = dd.from_delayed(dfs)
