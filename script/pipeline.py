@@ -187,7 +187,7 @@ for i in range(0, num_clusters, batch_size):
         print('Moved {} to {}'.format(cluster_path, build_path))
 
     # Debug
-    print('There are {:d} ({:.03f}%) remaining clusters: {}'.format(
+    print('There are {:d} ({:.02f}) remaining clusters: {}'.format(
         # Number of possible MGnifam
         len(kept_clusters),
         # Rate of possible MGnifam clusters
@@ -196,7 +196,7 @@ for i in range(0, num_clusters, batch_size):
         ', '.join(os.path.basename(path) for path in kept_clusters)
     ))
     # Debug
-    print('There are {:d} ({:.03f}%) clusters in BIAS: {}'.format(
+    print('There are {:d} ({:.02f}) clusters in BIAS: {}'.format(
         # Number of possible Pfam
         len(bias_clusters),
         # Rate of possible Pfam clusters
@@ -205,7 +205,7 @@ for i in range(0, num_clusters, batch_size):
         ', '.join(os.path.basename(path) for path in bias_clusters)
     ))
     # Debug
-    print('There are {:d} ({:.03f}%) clusters in Uniprot: {}'.format(
+    print('There are {:d} ({:.02f}) clusters in Uniprot: {}'.format(
         # Number of possible Pfam
         len(uni_clusters),
         # Rate of possible Pfam clusters
@@ -345,8 +345,6 @@ _ = plt.close()
 # Delete summary variable (free some space)
 del summary
 
-# Define set of running jobs
-
 # Debug
 print('Clusters for pfbuild:\n{}'.format('\n'.join(cluster_paths)))
 # Launch pfbuild jobs
@@ -376,7 +374,7 @@ kept_clusters = glob.glob(build_path + '/MGYP*')
 bias_clusters = glob.glob(build_path + '/BIAS/MGYP*')
 uni_clusters = glob.glob(build_path + '/Uniprot/MGYP*')
 # Debug
-print('There are {:d} ({:.03f}%) remaining clusters: {}'.format(
+print('There are {:d} ({:.02f}) remaining clusters: {}'.format(
     # Number of possible MGnifam
     len(kept_clusters),
     # Rate of possible MGnifam clusters
@@ -385,7 +383,7 @@ print('There are {:d} ({:.03f}%) remaining clusters: {}'.format(
     ', '.join(os.path.basename(path) for path in kept_clusters)
 ))
 # Debug
-print('There are {:d} ({:.03f}%) clusters in BIAS: {}'.format(
+print('There are {:d} ({:.02f}) clusters in BIAS: {}'.format(
     # Number of possible Pfam
     len(bias_clusters),
     # Rate of possible Pfam clusters
@@ -394,7 +392,7 @@ print('There are {:d} ({:.03f}%) clusters in BIAS: {}'.format(
     ', '.join(os.path.basename(path) for path in bias_clusters)
 ))
 # Debug
-print('There are {:d} ({:.03f}%) clusters in Uniprot: {}'.format(
+print('There are {:d} ({:.02f}) clusters in Uniprot: {}'.format(
     # Number of possible Pfam
     len(uni_clusters),
     # Rate of possible Pfam clusters

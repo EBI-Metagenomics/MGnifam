@@ -67,12 +67,12 @@ cluster_dir = './tmp/clusters'
 # Make cluster directory
 os.makedirs(cluster_dir, exist_ok=True)
 # Define number of rows per chunk
-batch_size = 1000000
+batch_size = int(1e08)
 # Open input file
 with file_handler(in_path) as in_file:
-    # Initialize list of [cluster name, sequence accession]
-    sequences = list()
-    # Set line counter
+    # Intialize chunk
+    curr_chunk = None
+    # Intialize line counter
     curr_line = 0
     # Loop through each input file line
     for line in tqdm(in_file):
@@ -81,40 +81,26 @@ with file_handler(in_path) as in_file:
         # Skip iteration if values not matching
         if not found:
             continue
-        # Get values as cluster name and sequence accession
-        cluster_name, sequence_acc = found.group(1), found.group(2)
-        # Append to list of sequences
-        sequences.append((cluster_name, sequence_acc))
-        # Check if batch size has ended
-        if ((curr_line + 1) % batch_size) == 0:
-            # Define output chunk name
+        # Check if current line is at the beginning of a new batch
+        if not (curr_line % batch_size):
+            # Eventually close previous chunk
+            if curr_chunk:
+                curr_chunk.close()
+            # Create new chunk path
             chunk_path = '{:s}/chunk{:d}.tsv.gz'.format(
                 cluster_dir,  # Directory where chunk will be stored
                 curr_line // batch_size  # Number of chunk stored
             )
-            # Open output chunk
-            with gzip.open(chunk_path, 'wt') as chunk:
-                # Write chunk content
-                chunk.write('\n'.join([
-                    '{:s}\t{:s}'.format(*seq) for seq in sequences
-                ]))
-            # Reinitialize sequences
-            sequences = list()
+            # Open new chunk
+            curr_chunk = gzip.open(chunk_path, 'wt')
+        # Get values as cluster name and sequence accession
+        cluster_name, sequence_acc = found.group(1), found.group(2)
+        # Append to list of sequences
+        curr_chunk.write('{:s}\t{:s}\n'.format(cluster_name, sequence_acc))
         # Update line counter
         curr_line += 1
-    # Define last chunk name
-    chunk_path = '{:s}/chunk{:d}.tsv.gz'.format(
-        cluster_dir,  # Directory where chunk will be stored
-        curr_line // batch_size  # Number of chunk stored
-    )
-    # Open output chunk
-    with gzip.open(chunk_path, 'wt') as chunk:
-        # Write chunk content
-        chunk.write('\n'.join([
-            '{:s}\t{:s}'.format(*seq) for seq in sequences
-        ]))
-    # Delete sequences list
-    del sequences
+    # Close last opened chunk
+    curr_chunk.close()
 
 # Create a list of lazy functions ready to return a pandas.DataFrame
 dfs = [delayed(read_tsv)(path) for path in glob.glob(cluster_dir + '/chunk*')]
