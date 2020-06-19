@@ -73,11 +73,11 @@ def get_sequences(in_name, in_path):
 CLUSTER_PATH = '/nfs/production/xfam/pfam/jaina/MGnify_clusters/2019_05/clusters/mgy_seqs.cluster.tsv.gz'
 
 # Create new cluster instance
-cluster = LSFCluster(cores=1, memory='2GB', use_stdin=True)
-# Require 12 jobs
-cluster.scale(12)
+cluster = LSFCluster(cores=1, memory='2 GB', use_stdin=True)
 # Create new client instance (interacts job scheduler)
 client = Client(cluster)
+# Require 12 jobs
+cluster.scale(12)
 
 # Debug
 print('Cluster', cluster)
@@ -146,7 +146,7 @@ futures = client.map(
 # Check progress
 progress(futures)
 # Wait for results
-sequences = futures.result()
+sequences = [future.result() for future in futures]
 # Concatenate retrieved lists into a single list
 sequences = [
     sequences[i][j]
