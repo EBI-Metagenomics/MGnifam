@@ -1,4 +1,4 @@
-from msa import MSA
+from src.msa import MSA
 import numpy as np
 
 

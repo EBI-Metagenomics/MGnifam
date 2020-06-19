@@ -25,6 +25,42 @@ from src.transform import OccupancyFilter
 from src.transform import MakeNonRedundant
 
 
+# Run mgseed
+def run_mgseed(cluster_name, cwd='./', env=os.environ.copy()):
+    # Run mgseed.pl in current batch directory
+    out = subprocess.run(
+        capture_output=True,  # Capture console output
+        encoding='utf-8',  # Set output encoding
+        env=env,
+        cwd=cwd,  # Set directory
+        args=['mgseed.pl', '-cluster', cluster_name]
+    )
+    # Debug
+    print('mgseed.pl:', out)
+    # Get process id as string
+    job_id = Bjob.id_from_string(out.stdout)
+    # Return new Bjob instance
+    return Bjob(id=job_id, status='RUN')
+
+
+# Run pfbuild
+def run_pfbuild(cluster_path, env=os.environ.copy()):
+    # Run pfbuild current cluster directory
+    out = subprocess.run(
+        capture_output=True,  # Capture console output
+        encoding='utf-8',  # Set output encoding
+        env=env,  # Set custom environment
+        cwd=cluster_path,  # Set directory
+        args=['pfbuild', '-withpfmake', '-db', 'uniprot']
+    )
+    # Debug
+    print('pfbuild:', out)
+    # Get process id as string
+    job_id = Bjob.id_from_string(out.stdout)
+    # Return new Bjob instance
+    return Bjob(id=job_id, status='RUN')
+
+
 # Read arguments
 parser = argparse.ArgumentParser(description='Develop a new MGnifam release')
 parser.add_argument(
@@ -54,10 +90,6 @@ batch_size = args.batch_size
 build_path = out_dir + '/build'
 # Make build directory
 os.mkdir(build_path)
-# # Define index of last batch
-# last_batch = (num_clusters // batch_size)
-# # Define number of batches
-# num_batches = 1 + last_batch
 
 # Get current environment
 env = os.environ.copy()
@@ -97,30 +129,18 @@ for i in range(0, num_clusters, batch_size):
     # Make batch directory
     os.mkdir(batch_path)
 
-    # Initialize set of running jobs
-    bjobs = list()
     # Debug
     print('Running mgseed.pl for all the {} clusters in batch {}'.format(
         len(batch_clusters),  # Number of clusters
         batch_path  # Current batch path
     ))
-    # Loop through each cluster in current batch
-    for cluster_name in batch_clusters:
-        # Run mgseed.pl in current batch directory
-        out = subprocess.run(
-            capture_output=True,  # Capture console output
-            encoding='utf-8',  # Set output encoding
-            env=env,
-            cwd=batch_path,  # Set directory
-            args=['mgseed.pl', '-cluster', cluster_name]
-        )
-        # Debug
-        print('mgseed.pl:', out)
-        # Get process id as string
-        job_id = Bjob.id_from_string(out.stdout)
-        # Save job id
-        bjobs.append(Bjob(id=job_id, status='RUN'))
-
+    # Launch mgseed jobs
+    bjobs = list(map(
+        # Mapped function
+        lambda cluster_name: run_mgseed(cluster_name, cwd=batch_path, env=env),
+        # Input values
+        batch_clusters
+    ))
     # Check running mgseed.pl jobs
     Bjob.check(bjobs, delay=30)
 
@@ -130,23 +150,13 @@ for i in range(0, num_clusters, batch_size):
     cluster_paths = glob.glob(batch_path + '/MGYP*')
     # Debug
     print('Clusters for pfbuild:\n{}'.format('\n'.join(cluster_paths)))
-    # Run pfbuild for every cluster in batch
-    for cluster_path in cluster_paths:
-        # Run pfbuild current cluster directory
-        out = subprocess.run(
-            capture_output=True,  # Capture console output
-            encoding='utf-8',  # Set output encoding
-            env=env,  # Set custom environment
-            cwd=cluster_path,  # Set directory
-            args=['pfbuild', '-withpfmake', '-db', 'uniprot']
-        )
-        # Debug
-        print('pfbuild:', out)
-        # Get process id as string
-        job_id = Bjob.id_from_string(out.stdout)
-        # Save job id
-        bjobs.append(Bjob(id=job_id, status='RUN'))
-
+    # Launch pfbuild scripts
+    bjobs = list(map(
+        # Mapped function
+        lambda cluster_path: run_pfbuild(cluster_path, env=env),
+        # Input values
+        cluster_paths
+    ))
     # Check running pfbuild jobs
     Bjob.check(bjobs, delay=30)
 
@@ -238,7 +248,10 @@ summary = dict()
 cluster_paths = glob.glob(build_path + '/MGYP*')
 # Debug
 print('There are {:d} clusters in build: {}'.format(
-    len(cluster_paths)
+    len(cluster_paths),
+    ', '.join([
+        os.path.dirname(os.path.basename(path)) for path in cluster_paths
+    ])
 ))
 # For every file in build, run pfbuild again
 for cluster_path in cluster_paths:
@@ -333,26 +346,16 @@ _ = plt.close()
 del summary
 
 # Define set of running jobs
-bjobs = list()
+
 # Debug
 print('Clusters for pfbuild:\n{}'.format('\n'.join(cluster_paths)))
-# Run pfbuild for every cluster in batch
-for cluster_path in cluster_paths:
-    # Run pfbuild current cluster directory
-    out = subprocess.run(
-        capture_output=True,  # Capture console output
-        encoding='utf-8',  # Set output encoding
-        env=env,  # Set custom environment
-        cwd=cluster_path,  # Set directory
-        args=['pfbuild', '-withpfmake', '-db', 'uniprot']
-    )
-    # Debug
-    print('pfbuild:', out)
-    # Get process id as string
-    job_id = Bjob.id_from_string(out.stdout)
-    # Save job id
-    bjobs.append(Bjob(id=job_id, status='RUN'))
-
+# Launch pfbuild jobs
+bjobs = list(map(
+    # Mapped function
+    lambda cluster_path: run_pfbuild(cluster_path, env=env),
+    # Input values list
+    cluster_paths
+))
 # Check running pfbuild jobs
 Bjob.check(bjobs, delay=30)
 

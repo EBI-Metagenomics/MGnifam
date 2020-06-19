@@ -129,4 +129,8 @@ dmypy.json
 .pyre/
 
 # Exclude data folder
-data/
+data/*
+# Exclude temporary folder
+tmp/*
+# Exclude dask folder
+dask*/*
