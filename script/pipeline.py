@@ -513,11 +513,11 @@ for in_path in in_clusters:
 for cluster_path in glob.glob(out_dir + '/batch*/MGYP*'):
     # Get cluster name
     cluster_name = os.path.basename(cluster_path)
-    cluster_name = os.path.dirname(cluster_name)
+    # cluster_name = os.path.dirname(cluster_name)
     # Move cluster to build folder
     shutil.move(cluster_path, build_path + '/' + cluster_name)
     # Debug
-    print('Moved {} to {}'.format(cluster_path, build_path))
+    print('Moved {} to {}'.format(cluster_path, build_path + '/' + cluster_name))
 
 # Define a common multiple sequence alignment transformation pipeline
 transform = Compose([
@@ -550,16 +550,16 @@ summary = dict()
 cluster_paths = glob.glob(build_path + '/MGYP*')
 # Debug
 print('There are {:d} clusters in build: {}'.format(
+    # Number of folders
     len(cluster_paths),
-    ', '.join([
-        os.path.dirname(os.path.basename(path)) for path in cluster_paths
-    ])
+    # List all folder names
+    ', '.join([os.path.basename(path) for path in cluster_paths])
 ))
 # For every file in build, run pfbuild again
 for cluster_path in cluster_paths:
     # Get cluster name
     cluster_name = os.path.basename(cluster_path)
-    cluster_name = os.path.dirname(cluster_name)
+    # cluster_name = os.path.dirname(cluster_name)
     # Initialize summary entry for current cluster
     summary[cluster_name] = {
         # Prettiness score
@@ -573,7 +573,7 @@ for cluster_path in cluster_paths:
         'post_conservation': None  # After occupancy
     }
     # Load multiple seed alignment
-    seed = MSA().from_aln(cluster_path)
+    seed = MSA().from_aln(cluster_path + '/SEED')
     # Save summary before trimming
     summary[cluster_name] = {**summary[cluster_name], **{
         'pre_prettiness': MSA.prettiness(seed.aln),
@@ -589,7 +589,7 @@ for cluster_path in cluster_paths:
         'post_conservation': MSA.conservation(seed.aln)[0]
     }}
     # Store new SEED alignment
-    seed.to_aln(cluster_path)
+    seed.to_aln(cluster_path + '/SEED')
 
 # Plot summary
 fig, axs = plt.subplots(2, 3, figsize=(30, 20), sharex='col', sharey='col')
@@ -614,7 +614,7 @@ for k in summary.keys():
         summary[k]['pre_occupancy'],
         density=True,
         stacked=True,
-        bisn=100
+        bins=100
     )
 # Plot occupancy distribution (post-trim)
 for k in summary.keys():
