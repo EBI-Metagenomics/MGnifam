@@ -4,25 +4,32 @@ This script substitutes mgseed and create_seed_from_cluster.pl
 """
 
 # Dependencies
+from tqdm import tqdm
 import numpy as np
 import subprocess
 import tempfile
+import shutil
 import time
 import gzip
 import re
 import os
 
+# Custom dependencies
+from src.sequence import Fasta
+
 
 class Seed(object):
 
     # Constructor
-    def __init__(self, clusters_path, mgnify_path, env=os.environ.copy()):
+    def __init__(self, clusters_path, mgnify_path, verbose=False, env=os.environ.copy()):
         # Path to clusters .tsv[.gz] file
         self.clusters_path = clusters_path
         # Path to sequences .fa[.gz] file
         self.mgnify_path = mgnify_path
         # Environmental variables used in external scritps execution
         self.env = env
+        # Set verbose output
+        self.verbose = verbose
 
     # Execute pipeline
     def main(self, cluster_name, out_path):
@@ -85,10 +92,13 @@ class Seed(object):
 
         # Initialize a list of sequence accession
         sequences_acc = list()
+        # Verbose out
+        if self.verbose:
+            print('Reading clusters file...')
         # Open file with defined file handler
         with file_handler(self.clusters_path) as clusters_file:
             # Loop through every line in file
-            for line in clusters_file:
+            for line in tqdm(clusters_file, disable=(not self.verbose)):
                 # Match cluster name and sequence accession
                 match = re.search(r'^([a-zA-Z0-9]+)[ \t]+([a-zA-Z0-9]+)', line)
                 # Case the line format does not match
@@ -133,10 +143,13 @@ class Seed(object):
         sequences = {acc: None for acc in sequences_acc}
         # Initialize current sequence accession
         curr_acc = None
+        # Verbose out
+        if self.verbose:
+            print('Reading sequences file...')
         # Open file with defined file handler
         with file_handler(self.clusters_path) as clusters_file:
             # Loop through every line in file
-            for line in clusters_file:
+            for line in tqdm(clusters_file, disable=(not self.verbose)):
                 # Check if line matches fasta header
                 match_header = re.search(r'^>([a-zA-Z0-9]+).*[\n\r]*$', line)
                 # Case current line is not header
@@ -270,24 +283,47 @@ class Seed(object):
         return comp_bias
 
     # Compute multiple sequence alignment
-    def make_msa(self, sequences):
+    def make_msa(self, sequences, out_path):
 
-        # Define temporary input file
-        fasta_file = tempfile.NamedTemporaryFile(delete=False)
+        # Initialize temporary input file
+        in_file = tempfile.NamedTemporaryFile(delete=False)
+        # Initialize temporary output file
+        out_file = tempfile.NamedTemporaryFile(delete=False)
+
         # Fill input fasta file from sequences dict(acc: fasta entry)
-        with open(fasta_file.name, 'w') as ff:
+        with open(in_file.name, 'w') as in_buffer:
             # Loop through each sequence in input dictionary
             for sequence_acc in sequences.keys():
                 # Write fasta entry
-                ff.write(sequences[sequence_acc] + '\n')
+                in_buffer.write(sequences[sequence_acc] + '\n')
 
+        # Run Multiple Sequence Alignment script
+        _ = subprocess.run(
+            capture_output=True,  # Capture console output
+            check=True,  # Check that script actually worked
+            encoding='utf-8',  # Output encoding
+            env=self.env,  # Environmental variables
+            args=[
+                'muscle', '-quiet',
+                '-in', in_file.name,
+                '-out', out_file.name
+            ]
+        )
 
+        # Persist temporary file to disk
+        shutil.copy(out_file.name, out_path + '/' + cluster_name)
 
         # Delete temporary inpput fasta file
-        os.remove(fasta_file)
+        os.remove(in_file)
+        # Delete temporary output fasta file
+        os.remove(out_file)
+
 
 # Unit test
 if __name__ == '__main__':
+
+    # Get root
+    root = os.path.dirname(os.path.realpath(__file__) + '/..')
 
     # Define path to clusters file
     CLUSTERS_PATH = '/nfs/production/xfam/pfam/jaina/MGnify_clusters/2019_05/clusters/mgy_seqs.cluster.tsv.gz'
@@ -297,12 +333,14 @@ if __name__ == '__main__':
     # Initialize new seed creation pipeline instance
     seed = Seed(
         clusters_path=CLUSTERS_PATH,
-        mgnify_path=MGNIFY_PATH
+        mgnify_path=MGNIFY_PATH,
+        verbose=True
     )
 
     # Define input cluster name
     cluster_name = 'MGYP000848664103'
 
+    # TEST cluster member retrieval
     # Set beginning time of the method
     time_beg = time.time()
     # Retrieve cluster members
@@ -310,9 +348,68 @@ if __name__ == '__main__':
     # Set ending time of the method
     time_end = time.time()
     # Compute method duration
-    time_took = time_end - time_beg()
+    time_took = time_end - time_beg
     # Log
-    print('Took {:.02f} seconds to retrieve {:d} members of cluster {:s}'.format(
+    print('Took {:.02f} seconds to retrieve {:d} members of cluster {:s}:'.format(
         time_took,  # Method duration
         len(cluster_members),  # Number of cluster sequences
+        cluster_name  # Name of the cluster
     ))
+    print(', '.join(cluster_members))  # Plot clusters members)
+
+    # TEST cluster sequences retrieval
+    # Reset beginning time of the method
+    time_beg = time.time()
+    # Retrieve cluster members
+    cluster_sequences = seed.get_sequences_fasta(cluster_members)
+    # Set ending time of the method
+    time_end = time.time()
+    # Compute method duration
+    time_took = time_end - time_beg
+    # Log
+    print('Took {:.02f} seconds to retrieve {:d} sequences of cluster {:s}:'.format(
+        time_took,  # Method duration
+        len(cluster_sequences),  # Number of cluster sequences
+        cluster_name  # Name of the cluster
+    ))
+    print('\n'.join([
+        fasta for acc, fasta in cluster_sequences.items()
+    ]))
+
+    # Define output fasta file path
+    with open(root + '/tmp/test.fasta', 'w') as out_file:
+        # Store sequences to file
+        for acc, fasta in cluster_sequences.items():
+            # Case no entry is empty
+            if fasta is None:
+                continue  # Skip iteration
+            # Otherwise, save line
+            out_file.write(fasta + '\n')
+
+    # # Empty cluster sequences
+    # # Read cluster sequences from fasta file
+    # with open(root + '/tmp/test.fasta', 'r') as in_file:
+    #     # Go through every entry in file
+    #     for entry in Fasta.read(in_file):
+    #         # Split entry in header and residues
+    #         header, residues = tuple(entry.split('\n'))
+    #         # Get
+    #
+    # # TEST multiple sequence alignment through MUSCLE
+    # # Reset beginning time of the method
+    # time_beg = time.time()
+    # # Retrieve cluster members
+    # cluster_sequences = seed.make_msa(
+    #     sequences=cluster_sequences,
+    #     out_path=root + '/tmp'
+    # )
+    # # Set ending time of the method
+    # time_end = time.time()
+    # # Compute method duration
+    # time_took = time_end - time_beg
+    # # Log
+    # print('Took {:.02f} seconds to make MSA of {:d} sequences of cluster {:s}:'.format(
+    #     time_took,  # Method duration
+    #     len(cluster_sequences),  # Number of cluster sequences
+    #     cluster_name  # Name of the cluster
+    # ))

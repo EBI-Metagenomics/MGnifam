@@ -426,8 +426,8 @@ _ = axs[1, 2].set_title('Post-trim conservation')
 _ = axs[0, 0].hist(x=pre_pty, bins=100)
 _ = axs[0, 0].axvline(np.mean(pre_pty), color='r')
 # Plot prettiness (post-trim)
-_ = axs[1, 0].hist(x=pre_pty, bins=100)
-_ = axs[1, 0].axvline(np.mean(pre_pty), color='r')
+_ = axs[1, 0].hist(x=post_pty, bins=100)
+_ = axs[1, 0].axvline(np.mean(post_pty), color='r')
 # Plot occupancy distribution (pre-trim)
 _ = axs[0, 1].hist(
     x=pre_occ,
