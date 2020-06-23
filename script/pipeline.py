@@ -360,7 +360,7 @@ transform = Compose([
     # Exclude sequences with less than half occupancy
     OccupancyFilter(
         # Use custom threshold:
-        threshold=0.5,
+        threshold=0.4,
         # Set threshold inclusive
         inclusive=True
     ),
@@ -383,44 +383,38 @@ print('There are {:d} clusters in build: {}'.format(
     # List all folder names
     ', '.join([os.path.basename(path) for path in cluster_paths])
 ))
+
+# Initialize occupancy
+pre_occ, post_occ = list(), list()
+# Initialize conservation
+pre_cnv, post_cnv = list(), list()
+# Initialize prettiness
+pre_pty, post_pty = list(), list()
 # For every file in build, run pfbuild again
 for cluster_path in cluster_paths:
     # Get cluster name
     cluster_name = os.path.basename(cluster_path)
-    # cluster_name = os.path.dirname(cluster_name)
-    # Initialize summary entry for current cluster
-    summary[cluster_name] = {
-        # Prettiness score
-        'pre_prettiness': None,  # Before trimming
-        'post_prettiness': None,  # After trimming
-        # Occupancy distribution
-        'pre_occupancy': None,  # Before trimming
-        'post_occupancy': None,  # After occupancy
-        # Conservation distribution
-        'pre_conservation': None,  # Before trimming
-        'post_conservation': None  # After occupancy
-    }
-    # Load multiple seed alignment
+    # Load multiple seed alignment from file
     seed = MSA().from_aln(cluster_path + '/SEED')
-    # Save summary before trimming
-    summary[cluster_name] = {**summary[cluster_name], **{
-        'pre_prettiness': MSA.prettiness(seed.aln),
-        'pre_occupancy': MSA.occupancy(seed.aln)[0],
-        'pre_conservation': MSA.conservation(seed.aln)[0]
-    }}
-    # Execute trim, substitute original seed
+
+    # Update occupancy, conervation and prettyness before trimming
+    pre_pty.append(MSA.prettiness(seed.aln))
+    pre_occ.extend(MSA.occupancy(seed.aln)[0])
+    pre_cnv.extend(MSA.conservation(seed.aln)[0])
+
+    # Execute trimming, substitute original seed
     seed = transform(seed)
-    # Save summary after trimming
-    summary[cluster_name] = {**summary[cluster_name], **{
-        'post_prettiness': MSA.prettiness(seed.aln),
-        'post_occupancy': MSA.occupancy(seed.aln)[0],
-        'post_conservation': MSA.conservation(seed.aln)[0]
-    }}
+
+    # Update occupancy, conervation and prettyness after trimming
+    post_pty.append(MSA.prettiness(seed.aln))
+    post_occ.extend(MSA.occupancy(seed.aln)[0])
+    post_cnv.extend(MSA.conservation(seed.aln)[0])
+
     # Store new SEED alignment
     seed.to_aln(cluster_path + '/SEED')
 
 # Plot summary
-fig, axs = plt.subplots(2, 3, figsize=(30, 20), sharex='col', sharey='col')
+fig, axs = plt.subplots(2, 3, figsize=(30, 15), sharex='col', sharey='col')
 # Set titles
 _ = axs[0, 0].set_title('Pre-trim prettiness')
 _ = axs[0, 1].set_title('Pre-trim occupancy')
@@ -429,51 +423,43 @@ _ = axs[1, 0].set_title('Post-trim prettiness')
 _ = axs[1, 1].set_title('Post-trim occupancy')
 _ = axs[1, 2].set_title('Post-trim conservation')
 # Plot prettiness (pre-trim)
-pre_prettiness = [summary[k]['pre_prettiness'] for k in summary.keys()]
-_ = axs[0, 0].hist(pre_prettiness, bins=100)
-_ = axs[0, 0].axvline(np.mean(pre_prettiness))
+_ = axs[0, 0].hist(x=pre_pty, bins=100)
+_ = axs[0, 0].axvline(np.mean(pre_pty), color='r')
 # Plot prettiness (post-trim)
-post_prettiness = [summary[k]['post_prettiness'] for k in summary.keys()]
-_ = axs[1, 0].hist(post_prettiness, bins=100)
-_ = axs[1, 0].axvline(np.mean(post_prettiness))
+_ = axs[1, 0].hist(x=pre_pty, bins=100)
+_ = axs[1, 0].axvline(np.mean(pre_pty), color='r')
 # Plot occupancy distribution (pre-trim)
-for k in summary.keys():
-    _ = axs[0, 1].hist(
-        summary[k]['pre_occupancy'],
-        density=True,
-        stacked=True,
-        bins=100
-    )
+_ = axs[0, 1].hist(
+    x=pre_occ,
+    density=True,
+    bins=100
+)
+_ = axs[0, 1].set_xlim(left=0.0, right=1.0)
 # Plot occupancy distribution (post-trim)
-for k in summary.keys():
-    _ = axs[1, 1].hist(
-        summary[k]['post_occupancy'],
-        density=True,
-        stacked=True,
-        bins=100
-    )
+_ = axs[1, 1].hist(
+    x=post_occ,
+    density=True,
+    bins=100
+)
+_ = axs[1, 1].set_xlim(left=0.0, right=1.0)
 # Plot conservation distribution (pre-trim)
-for k in summary.keys():
-    _ = axs[0, 2].hist(
-        summary[k]['pre_conservation'],
-        density=True,
-        stacked=True,
-        bins=100
-    )
+_ = axs[0, 2].hist(
+    x=pre_cnv,
+    density=True,
+    bins=100
+)
+_ = axs[0, 2].set_xlim(left=0.0)
 # Plot conservation distribution (post-trim)
-for k in summary.keys():
-    _ = axs[1, 2].hist(
-        summary[k]['post_conservation'],
-        density=True,
-        stacked=True,
-        bins=100
-    )
+_ = axs[1, 2].hist(
+    x=post_cnv,
+    density=True,
+    bins=100
+)
+_ = axs[1, 2].set_xlim(left=0.0)
 # Save figure to file
 _ = plt.savefig(out_dir + '/trim.png')
 # Close plot
 _ = plt.close()
-# Delete summary variable (free memory)
-del summary
 
 # Debug
 print('Clusters for pfbuild:\n{}'.format('\n'.join(cluster_paths)))
