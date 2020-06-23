@@ -4,17 +4,25 @@ This script substitutes mgseed and create_seed_from_cluster.pl
 """
 
 # Dependencies
+import subprocess
+import tempfile
 import gzip
 import re
+import os
 
 
 class Seed(object):
 
     # Constructor
-    def __init__(self, clusters_path, mgnify_path):
+    def __init__(self, clusters_path, mgnify_path, out_path, env=os.environ.copy()):
+        # Path to clusters .tsv[.gz] file
         self.clusters_path = clusters_path
+        # Path to sequences .fa[.gz] file
         self.mgnify_path = mgnify_path
-        raise NotImplementedError
+        # Path to output directory
+        self.out_path = out_path
+        # Environmental variables used in external scritps execution
+        self.env = env
 
     # Wrapper for main
     def __call__(self, *args, **kwargs):
@@ -23,6 +31,9 @@ class Seed(object):
 
     # Execute pipeline
     def main(self, cluster_name):
+
+        # Initialize cluster sequences dict(accession: fasta)
+        cluster_sequences = dict()
 
         # Get cluster members (squence accession numbers)
         cluster_members = self.get_cluster_members(cluster_name)
@@ -99,7 +110,7 @@ class Seed(object):
         cluster_members = set(cluster_members)
 
         # Initialize a list of sequence accession
-        sequences = {'': ''}
+        cluster_sequences = {'': ''}
         # Open file with defined file handler
         with file_handler(self.clusters_path) as clusters_file:
             # Loop through every line in file
@@ -127,10 +138,59 @@ class Seed(object):
                     # Append current sequence to its header
                     sequences[curr_header] += re.sub(r'[^a-zA-Z]+', '', line)
             # Get last sequence header
-            curr_header = [*sequences.keys()][-1]
+            curr_header = [*cluster_sequences.keys()][-1]
             # Get last sequence accession
             curr_acc = re.search(r'^([a-zA-Z0-9]+)[ \t]+', curr_header)
             # Delete last sequence if not cluster member
-            del sequences[curr_header]
+            del cluster_sequences[curr_header]
         # Return retrieved sequences
-        return sequences
+        return cluster_sequences
+
+    # Get compositional bias for cluster members
+    def get_compositional_bias(self, sequences):
+        # Define temporary input file
+        fasta_file = tempfile.NamedTemporaryFile(delete=False)
+        # Define temporary output file
+        out_file = tempfile.NamedTemporaryFile(delete=False)
+
+        # Add header entry
+        with open(fasta_file.name, 'w') as ff:
+            # Fill FASTA input file
+            for header in sequences.keys():
+                # Write header row
+                ff.write('>' + header + '\n')
+                # Write content row
+                ff.write(sequences[header] + '\n')
+
+        # Run MobiDB Lite
+        _ = subprocess.run(
+            capture_output=True,  # Capture console output
+            check=True,  # Check that script actually worked
+            encoding='utf-8',  # Output encoding
+            env=self.env,  # Environmental variables
+            # Executable arguments
+            args=[
+                'python3', 'mobidb_lite.py', '-o', out_file, fasta_file.name
+            ]
+        )
+
+        # Get output of MobiDB Lite
+        with open(out_file.name, 'r') as of:
+            # Loop through every file line
+            for line in of:
+                # Match output file line format
+                match = re.search(r'^([a-zA-Z0-9]+)[ \t]+(\d+)[ \t]+(\d+)', line)
+                # Case the format does not match
+                if not match:
+                    continue  # Skip iteration
+                # Get sequence accession
+                sequence_acc = match.group(1)
+                # Get starting/ending residues of disordered region
+                disorder_beg, disorder_end = int(match.group(2)), int(match.group(3))
+                # Compute number of disordered residues
+                num_disorder = disorder_end - disorder_beg
+
+        # Delete input file
+        os.remove(fasta_file)
+        # Delete output file
+        os.remove(out_file)

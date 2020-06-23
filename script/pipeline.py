@@ -45,15 +45,24 @@ def run_mgseed(cluster_name, cwd='./', env=os.environ.copy()):
     return Bjob(id=job_id, status='RUN')
 
 
-# Run pfbuild
-def run_pfbuild(cluster_path, env=os.environ.copy()):
+# Run pfbuild/mfbuild
+def run_pfbuild(cluster_path, db='uniprot', withpfmake=True, make_eval=None, env=os.environ.copy()):
+    # Make list of arguments
+    args = ['pfbuild']
+    # Check if 'withpfmake' is enabled
+    args = (args + ['-withpfmake']) if withpfmake else args
+    # Define database
+    args = args + ['-db', db]
+    # Check if 'make eval' is enabled
+    args = (args + ['-makeEval', str(make_eval)]) if make_eval is not None else args
     # Run pfbuild current cluster directory
     out = subprocess.run(
         capture_output=True,  # Capture console output
+        check=True,  # Check script execution
         encoding='utf-8',  # Set output encoding
         env=env,  # Set custom environment
         cwd=cluster_path,  # Set directory
-        args=['pfbuild', '-withpfmake', '-db', 'uniprot']
+        args=args
     )
     # Debug
     print('pfbuild:', out)
@@ -61,6 +70,17 @@ def run_pfbuild(cluster_path, env=os.environ.copy()):
     job_id = Bjob.id_from_string(out.stdout)
     # Return new Bjob instance
     return Bjob(id=job_id, status='RUN')
+
+
+# Wrapper for running mfbuild
+def run_mfbuild(cluster_path, env=os.environ.copy()):
+    return run_pfbuild(
+        cluster_path=cluster_path,
+        db='mgnify',
+        withpfmake=True,
+        make_eval=0.01,
+        env=env
+    )
 
 
 # Run check_uniprot.pl
@@ -75,6 +95,7 @@ def run_check_uniprot(clusters_dir, env=os.environ.copy()):
     )
     # Debug
     print('check_uniprot.pl:', out)
+
 
 # Make batch of clusters
 def make_batch_clusters(cluster_names, batch_path, env=os.environ.copy(), log=dict()):
@@ -144,45 +165,6 @@ def make_batch_clusters(cluster_names, batch_path, env=os.environ.copy(), log=di
     log['num_mgnifam'] = len(mgnifam_clusters)  # Number of MGnifam clusters
     log['num_bias'] = len(bias_clusters)  # Number of BIAS discarded clusters
     log['num_uniprot'] = len(uniprot_clusters)  # Number of Uniprot discarded clusters
-    # # Debug
-    # print('There are {:d} ({:.02f}) remaining clusters: {}'.format(
-    #     # Number of possible MGnifam
-    #     len(kept_clusters),
-    #     # Rate of possible MGnifam clusters
-    #     len(kept_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
-    #     # List all possible MGnifam
-    #     ', '.join(os.path.basename(path) for path in kept_clusters)
-    # ))
-    # # Debug
-    # print('There are {:d} ({:.02f}) clusters in BIAS: {}'.format(
-    #     # Number of possible Pfam
-    #     len(bias_clusters),
-    #     # Rate of possible Pfam clusters
-    #     len(bias_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
-    #     # List all possible Pfam
-    #     ', '.join(os.path.basename(path) for path in bias_clusters)
-    # ))
-    # # Debug
-    # print('There are {:d} ({:.02f}) clusters in Uniprot: {}'.format(
-    #     # Number of possible Pfam
-    #     len(uni_clusters),
-    #     # Rate of possible Pfam clusters
-    #     len(uni_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
-    #     # List all possible Pfam
-    #     ', '.join(os.path.basename(path) for path in uni_clusters)
-    # ))
-
-    # # Delete current batch folder (free space)
-    # shutil.rmtree(batch_path)
-
-    # # Delete BIAS folder
-    # shutil.rmtree(batch_path + '/BIAS')
-    # # Delete Uniprot folder
-    # shutil.rmtree(batch_path + '/Uniprot')
-
-    # # Return cluster classes iterators
-    # return mgnifam_clusters, bias_clusters, uniprot_clusters
-
 
 # Initialize log (dictionary)
 log = {
@@ -354,160 +336,6 @@ for in_path in in_clusters:
     # Check early stopping condition, as in inner loop
     if cluster_idx >= num_clusters:
         break  # Exit outer loop
-# # Define cluster iterator
-# i = 0
-# # Define empty batch of clusters
-# batch_clusters = list()
-# # Run through each clusters file
-# for j in range(len(in_clusters)):
-#     # Open cluster file buffer
-#     in_cluster = open(in_clusters[j], 'r')
-#     # Loop through every line in file
-#     for line in in_cluster:
-#         # Check if number of iterated clusters has been reached
-#         if i >= num_clusters:
-#             # Break execution
-#             break;
-#         # Search current cluster and its size in line
-#         found = re.search(r'^([a-zA-Z0-9]+)[ \t]+(\d+)', line)
-#         # If line does not match, skip iteration
-#         if not found:
-#             continue
-#         # If first line of a new batch, define an empty batch
-#         if i % batch_size == 0:
-#             # Reset a new empty batch container
-#             batch_clusters = list()
-#         # Otherwise, retrieve either cluster name and its size
-#         cluster_name, cluster_size = str(found.group(1)), int(found.group(2))
-#         # Add cluster to batch
-#         batch_clusters.append(cluster_name)
-#         # Update line count
-#         i = i + 1
-#         # Case batch is full
-#         if i % batch_size == 0:
-#             # Run pipeline for last cluster, if any
-#             make_batch_clusters(
-#                 # Stored batch of clusters
-#                 batch_clusters,
-#                 # Path to current batch
-#                 batch_path=out_dir + '/batch{:d}'.format(i // batch_size),
-#                 # Environmental variables
-#                 env=env
-#             )
-#     # Close cluster file buffer
-#     in_cluster.close()
-#     # Check if number of iterated clusters has been reached
-#     if i >= num_clusters: break
-# # Check if there is at least one cluster in last batch
-# if batch_clusters:
-#     # Run pipeline for last cluster, if any
-#     make_batch_clusters(
-#         # Stored batch of clusters
-#         batch_clusters,
-#         # Path to current batch
-#         batch_path=out_dir + '/batch{:d}'.format((i // batch_size) + 1),
-#         # Environmental variables
-#         env=env
-#     )
-
-# # Run mgseed.pl for each batch of clusters
-# while i < num_clusters:
-#     # Get current batch of cluster names
-#     batch_clusters = in_clusters[i:min(i+batch_size, num_clusters)]
-#     # Define batch path (make temporary directory)
-#     batch_path = out_dir + '/batch{}'.format(i // batch_size)
-#     # Make batch directory
-#     os.mkdir(batch_path)
-#
-#     # Debug
-#     print('Running mgseed.pl for all the {} clusters in batch {}'.format(
-#         len(batch_clusters),  # Number of clusters
-#         batch_path  # Current batch path
-#     ))
-#     # Launch mgseed jobs
-#     bjobs = list(map(
-#         # Mapped function
-#         lambda cluster_name: run_mgseed(cluster_name, cwd=batch_path, env=env),
-#         # Input values
-#         batch_clusters
-#     ))
-#     # Check running mgseed.pl jobs
-#     Bjob.check(bjobs, delay=30)
-#
-#     # Define set of running jobs
-#     bjobs = list()
-#     # Retrieve cluster paths
-#     cluster_paths = glob.glob(batch_path + '/MGYP*')
-#     # Debug
-#     print('Clusters for pfbuild:\n{}'.format('\n'.join(cluster_paths)))
-#     # Launch pfbuild scripts
-#     bjobs = list(map(
-#         # Mapped function
-#         lambda cluster_path: run_pfbuild(cluster_path, env=env),
-#         # Input values
-#         cluster_paths
-#     ))
-#     # Check running pfbuild jobs
-#     Bjob.check(bjobs, delay=30)
-#
-#     # Run check_uniprot.pl in current batch directory
-#     out = subprocess.run(
-#         capture_output=True,
-#         encoding='utf-8',
-#         env=env,
-#         cwd=batch_path,
-#         args=['check_uniprot.pl']
-#     )
-#     # Debug
-#     print('check_uniprot.pl:', out)
-#
-#     # Define kept clusters (MGnifam)
-#     kept_clusters = glob.glob(batch_path + '/MGYP*')
-#     # Define discarded clusters
-#     bias_clusters = glob.glob(batch_path + '/BIAS/MGYP*')
-#     uni_clusters = glob.glob(batch_path + '/Uniprot/MGYP*')
-#     # Debug
-#     print('There are {:d} ({:.02f}) remaining clusters: {}'.format(
-#         # Number of possible MGnifam
-#         len(kept_clusters),
-#         # Rate of possible MGnifam clusters
-#         len(kept_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
-#         # List all possible MGnifam
-#         ', '.join(os.path.basename(path) for path in kept_clusters)
-#     ))
-#     # Debug
-#     print('There are {:d} ({:.02f}) clusters in BIAS: {}'.format(
-#         # Number of possible Pfam
-#         len(bias_clusters),
-#         # Rate of possible Pfam clusters
-#         len(bias_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
-#         # List all possible Pfam
-#         ', '.join(os.path.basename(path) for path in bias_clusters)
-#     ))
-#     # Debug
-#     print('There are {:d} ({:.02f}) clusters in Uniprot: {}'.format(
-#         # Number of possible Pfam
-#         len(uni_clusters),
-#         # Rate of possible Pfam clusters
-#         len(uni_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
-#         # List all possible Pfam
-#         ', '.join(os.path.basename(path) for path in uni_clusters)
-#     ))
-#
-#     # # Delete current batch folder (free space)
-#     # shutil.rmtree(batch_path)
-#
-#     # Delete BIAS folder
-#     shutil.rmtree(batch_path + '/BIAS')
-#     # Delete Uniprot folder
-#     shutil.rmtree(batch_path + '/Uniprot')
-
-# # Define MGnifam (kept) clusters
-# mgnifam_clusters = glob.iglob(batch_path + '/MGYP*')
-# # Define BIAS (discarded) clusters
-# bias_clusters = glob.iglob(batch_path + '/BIAS/MGYP*')
-# # Define Uniprot (discarded) clusters
-# uniprot_clusters = glob.iglob(batch_path + '/Uniprot/MGYP*')
 
 # Loop through folders not discarded from each batch
 for cluster_path in glob.glob(out_dir + '/batch*/MGYP*'):
@@ -641,7 +469,7 @@ for k in summary.keys():
         bins=100
     )
 # Save figure to file
-_ = plt.savefig(build_path + '/trim.png')
+_ = plt.savefig(out_dir + '/trim.png')
 # Close plot
 _ = plt.close()
 # Delete summary variable (free memory)
@@ -650,59 +478,27 @@ del summary
 # Debug
 print('Clusters for pfbuild:\n{}'.format('\n'.join(cluster_paths)))
 # Launch pfbuild jobs
-bjobs = list(map(
+Bjob.check(delay=30, bjobs=list(map(
     # Mapped function
     lambda cluster_path: run_pfbuild(cluster_path, env=env),
     # Input values list
     cluster_paths
-))
-# Check running pfbuild jobs
-Bjob.check(bjobs, delay=30)
+)))
 
 # Run check_uniprot.pl in current build directory
 run_check_uniprot(build_path, env=env)
-# out = subprocess.run(
-#     capture_output=True,
-#     encoding='utf-8',
-#     env=env,
-#     cwd=build_path,
-#     args=['check_uniprot.pl']
-# )
-# # Debug
-# print('check_uniprot.pl:', out)
 
-# # Define kept clusters (MGnifam)
-# kept_clusters = glob.glob(build_path + '/MGYP*')
-# # Define discarded clusters
-# bias_clusters = glob.glob(build_path + '/BIAS/MGYP*')
-# uni_clusters = glob.glob(build_path + '/Uniprot/MGYP*')
-# # Debug
-# print('There are {:d} ({:.02f}) remaining clusters: {}'.format(
-#     # Number of possible MGnifam
-#     len(kept_clusters),
-#     # Rate of possible MGnifam clusters
-#     len(kept_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
-#     # List all possible MGnifam
-#     ', '.join(os.path.basename(path) for path in kept_clusters)
-# ))
-# # Debug
-# print('There are {:d} ({:.02f}) clusters in BIAS: {}'.format(
-#     # Number of possible Pfam
-#     len(bias_clusters),
-#     # Rate of possible Pfam clusters
-#     len(bias_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
-#     # List all possible Pfam
-#     ', '.join(os.path.basename(path) for path in bias_clusters)
-# ))
-# # Debug
-# print('There are {:d} ({:.02f}) clusters in Uniprot: {}'.format(
-#     # Number of possible Pfam
-#     len(uni_clusters),
-#     # Rate of possible Pfam clusters
-#     len(uni_clusters) / (len(bias_clusters) + len(uni_clusters) + len(kept_clusters)),
-#     # List all possible Pfam
-#     ', '.join(os.path.basename(path) for path in uni_clusters)
-# ))
+# Retrieve cluster paths
+cluster_paths = glob.glob(build_path + '/MGYP*')
+# Debug
+print('Clusters for mfbuild:\n{}'.format('\n'.join(cluster_paths)))
+# Launch mfbuild jobs
+Bjob.check(delay=30, bjobs=list(map(
+    # Mapped function
+    lambda cluster_path: run_mfbuild(cluster_path, env=env),
+    # Input values
+    cluster_paths
+)))
 
 # Log
 log['end_time'] = time.time()  # End time of the script
