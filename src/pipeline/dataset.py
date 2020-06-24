@@ -33,8 +33,11 @@ class Dataset(object):
         out_path (str)  String containing the path of a generic chunk file,
                         e.g. `chunk{:d}.tsv.gz`. It must be formattable.
         """
+        # Get output directory
+        out_dir = os.dirname(out_path)
         # Make output directory (chunks will be stored here)
-        os.mkdir(os.dirname(out_path))
+        if not os.path.exists(out_dir):
+            os.mkdir(out_dir)
 
         # Open file for reading
         with open_any(self.clusters_path) as in_file:
@@ -76,9 +79,11 @@ class Dataset(object):
         out_path (str)  String containing the path of a generic chunk file,
                         e.g. `chunk{:d}.fa.gz`. It must be formattable.
         """
-
+        # Get output directory
+        out_dir = os.dirname(out_path)
         # Make output directory (chunks will be stored here)
-        os.mkdir(os.dirname(out_path))
+        if not os.path.exists(out_dir):
+            os.mkdir(out_dir)
 
         # Open file for reading
         with open_any(self.mgnify_path) as in_file:

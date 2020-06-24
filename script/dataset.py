@@ -1,6 +1,7 @@
 # Dependencies
 from dask_jobqueue import LSFCluster
 from dask.distributed import Client
+import time
 
 # Custom dependencies
 from src.pipeline.dataset import Dataset
@@ -32,14 +33,27 @@ cluster.scale(1)
 # Debug
 print(cluster)
 
+# Initialize timers
+time_beg = time.time()
+time_end = None
+time_took = None
+
+# Debug
+print('Chunking {:s} with chunk size {:d}'.format(CLUSTERS_PATH, int(1e07)))
 # Make chunking
 future = client.submit(
     ds.chunk_clusters,
-    out_path=OUT_PATH + '/data/clusters/{}.tsv.gz',
-    chunk_size=int(1e06)
+    out_path=OUT_PATH + '/data/clusters/{:06d}.tsv.gz',
+    chunk_size=int(1e07)
 )
 # Get the results
-future.result()
+_ = future.result()
+
+# Update timers
+time_end = time.time()
+time_took = time_end - time_beg
+# Debug
+print('Took {:.0f} seconds to chunk {:s}'.format(time_took, CLUSTERS_PATH))
 
 # # Chunk mgnify file
 # ds.chunk_mgnify(
