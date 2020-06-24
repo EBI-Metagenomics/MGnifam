@@ -50,15 +50,14 @@ def run_pfbuild(cluster_path, db='uniprot', withpfmake=True, make_eval=None, env
     # Make list of arguments
     args = ['pfbuild']
     # Check if 'withpfmake' is enabled
-    args = (args + ['-withpfmake']) if withpfmake else args
+    args += ['-withpfmake'] if withpfmake else []
     # Define database
-    args = args + ['-db', db]
+    args += ['-db', db]
     # Check if 'make eval' is enabled
-    args = (args + ['-makeEval', str(make_eval)]) if make_eval is not None else args
+    args += ['-makeEval', str(make_eval)] if make_eval is not None else []
     # Run pfbuild current cluster directory
     out = subprocess.run(
         capture_output=True,  # Capture console output
-        check=True,  # Check script execution
         encoding='utf-8',  # Set output encoding
         env=env,  # Set custom environment
         cwd=cluster_path,  # Set directory

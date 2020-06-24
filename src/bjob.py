@@ -13,21 +13,25 @@ class Bjob(object):
 
     def __init__(self, id=None, status=None, out_path='/dev/null', err_path='/dev/null'):
         self.id = id
-        self.status = status
+        self.curr_status = status
         self.out_path = out_path
         self.err_path = err_path
 
     def get_status(self):
         """Retrieve job status
+        Check status onnly if it is RUN or PEND, otherwise, returns the already
+        set status
 
         Return
         (str)   Job status, which can be 'RUN', 'PEND', 'DONE', 'EXIT'
         """
         # If not running, return current status
-        if self.status not in set(['RUN', 'PEND']):
-            return self.status
+        if self.curr_status not in set(['RUN', 'PEND']):
+            return self.curr_status
         # Otherwise, retrieve status using bjobs
-        return self.__class__.status(self.id)
+        self.curr_status = self.__class__.status(self.id)
+        # Return retrieved status
+        return self.curr_status
 
     def is_running(self):
         """Define if current job is running
@@ -61,7 +65,6 @@ class Bjob(object):
         out = subprocess.run(
             capture_output=True,  # Retain output
             encoding='utf-8',  # Encoding
-            check=True,  # Check execution
             args=args  # bsub arguments
         )
         # Debug
@@ -110,20 +113,25 @@ class Bjob(object):
         out = subprocess.run(
             capture_output=True,
             encoding='utf-8',
-            check=True,
             args=['bjobs', '-noheader', '-a', job_id]
         )
         # Debug
         print('bjobs (status):', out)
-        # Split output
-        out = re.sub(r'[ \t]+', ' ', out.stdout).split(' ')
-        # Retrieve status as string
-        status = str(out[2])
+        # Match bjobs row format
+        match = re.search(r'^(\S+)\s+(\S+)\s+(\S+)\s+', out.stdout)
+        # Case row format does not match
+        if not match:
+            # Raise new error
+            raise AttributeError('Can not parse job status')
+        # Get job id, user name and job status
+        found_job_id = match.group(1)
+        found_user_name = match.group(2)
+        found_job_status = match.group(3)
         # Check status value
-        if status not in set(['RUN', 'PEND', 'DONE', 'EXIT']):
-            raise ValueError('Unable to parse status command')
+        if found_job_status not in set(['RUN', 'PEND', 'DONE', 'EXIT']):
+            raise ValueError('Got an invalid job status')
         # Return retrieved status
-        return status
+        return found_job_status
 
     @classmethod
     def kill(cls, job_id):
