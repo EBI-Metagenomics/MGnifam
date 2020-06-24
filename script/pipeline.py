@@ -371,8 +371,6 @@ transform = Compose([
         inclusive=False
     )
 ])
-# Initialize summary dictionary
-summary = dict()
 # Get list of clusters paths
 cluster_paths = glob.glob(build_path + '/MGYP*')
 # Debug

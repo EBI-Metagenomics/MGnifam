@@ -11,8 +11,9 @@ import tempfile
 import shutil
 import time
 import gzip
-import re
+import sys
 import os
+import re
 
 # Custom dependencies
 from src.sequence import Fasta
@@ -97,8 +98,14 @@ class Seed(object):
             print('Reading clusters file...')
         # Open file with defined file handler
         with file_handler(self.clusters_path) as clusters_file:
+            # Define iterator
+            line_iterator = tqdm(
+                clusters_file,  # File line iterator
+                disable=(not self.verbose),  # Set verbose
+                file=sys.stdout  # Force printing to stdout
+            )
             # Loop through every line in file
-            for line in tqdm(clusters_file, disable=(not self.verbose)):
+            for line in line_iterator:
                 # Match cluster name and sequence accession
                 match = re.search(r'^([a-zA-Z0-9]+)[ \t]+([a-zA-Z0-9]+)', line)
                 # Case the line format does not match
@@ -130,8 +137,11 @@ class Seed(object):
                                 numbers as keys and fasta entries as values
         """
 
+        # Get sequences accession numbers as set
+        sequences_acc = set(sequences_acc)
+
         # Check if sequences fasta file is compressed
-        is_gzip = bool(re.search(r'\.gz$', self.clusters_path))
+        is_gzip = bool(re.search(r'\.gz$', self.mgnify_path))
         # Define an uncompressed file handler
         file_handler = lambda path: open(path, 'r')
         # Case sequences file is compressed
@@ -140,39 +150,28 @@ class Seed(object):
             file_handler = lambda path: gzip.open(path, 'rt')
 
         # Initialize output dictionary with sequences accession numbers as keys
-        sequences = {acc: None for acc in sequences_acc}
-        # Initialize current sequence accession
-        curr_acc = None
+        sequences = dict()
         # Verbose out
         if self.verbose:
             print('Reading sequences file...')
         # Open file with defined file handler
-        with file_handler(self.clusters_path) as clusters_file:
-            # Loop through every line in file
-            for line in tqdm(clusters_file, disable=(not self.verbose)):
-                # Check if line matches fasta header
-                match_header = re.search(r'^>([a-zA-Z0-9]+).*[\n\r]*$', line)
-                # Case current line is not header
-                if not match_header:
-                    # Check if there is a valid accession number set
-                    if curr_acc is not None:
-                        # Store residues in current line
-                        sequences[curr_acc] += re.sub(r'[^a-zA-Z]+', '', line)
-                    # Otherwise, skip iteration
-                # Case current line is header
-                else:
-                    # Set sequence accession
-                    curr_acc = match_header.group(1)
-                    # Case current accession is not one of the searched one
-                    if curr_acc not in set(sequences.keys()):
-                        # Discard sequence accession
-                        curr_acc = None
-                    # Case current accession must be stored
-                    else:
-                        # Retrieve header line without special characters
-                        header = re.sub(r'[\n\r]*$', '', line)
-                        # Store header line (followed by newline)
-                        sequences[curr_acc] = header + '\n'
+        with file_handler(self.mgnify_path) as fasta_file:
+            # Define entries iterator
+            entry_iterator = tqdm(
+                Fasta.read(fasta_file),  # Input iterator
+                disable=(not self.verbose),  # Set verbose
+                file=sys.stdout  # Force printing to stdout
+            )
+            # Loop through each entry in input fasta file
+            for entry in entry_iterator:
+                # Split entry in header and residues
+                header, resiudes = entry.split('\n')
+                # Get accession number from header
+                acc = str(re.search(r'^(\S+)\s', header).group(1))
+                # Case accession is one of the searched ones
+                if acc in sequences_acc:
+                    # Store entry
+                    sequences[acc] = entry
         # Return filled sequences dictionary
         return sequences
 
@@ -340,26 +339,45 @@ if __name__ == '__main__':
     # Define input cluster name
     cluster_name = 'MGYP000848664103'
 
-    # TEST cluster member retrieval
-    # Set beginning time of the method
-    time_beg = time.time()
-    # Retrieve cluster members
-    cluster_members = seed.get_cluster_members(cluster_name)
-    # Set ending time of the method
-    time_end = time.time()
-    # Compute method duration
-    time_took = time_end - time_beg
-    # Log
-    print('Took {:.02f} seconds to retrieve {:d} members of cluster {:s}:'.format(
-        time_took,  # Method duration
-        len(cluster_members),  # Number of cluster sequences
-        cluster_name  # Name of the cluster
-    ))
-    print(', '.join(cluster_members))  # Plot clusters members)
+    # # TEST cluster member retrieval
+    # # Set beginning time of the method
+    # time_beg = time.time()
+    # # Retrieve cluster members
+    # cluster_members = seed.get_cluster_members(cluster_name)
+    # # Set ending time of the method
+    # time_end = time.time()
+    # # Compute method duration
+    # time_took = time_end - time_beg
+    # # Log
+    # print('Took {:.02f} seconds to retrieve {:d} members of cluster {:s}:'.format(
+    #     time_took,  # Method duration
+    #     len(cluster_members),  # Number of cluster sequences
+    #     cluster_name  # Name of the cluster
+    # ))
+    # print(', '.join(cluster_members))  # Plot clusters members)
 
     # TEST cluster sequences retrieval
     # Reset beginning time of the method
     time_beg = time.time()
+    # Define cluster members list
+    cluster_members = [
+        'MGYP000848664103', 'MGYP000854299633', 'MGYP000861318196',
+        'MGYP001051765912', 'MGYP000901579806', 'MGYP000903671016',
+        'MGYP000907285651', 'MGYP000978539846', 'MGYP000993384433',
+        'MGYP000694348273', 'MGYP001010363999', 'MGYP000941896966',
+        'MGYP000720888849', 'MGYP000959600490', 'MGYP001084805069',
+        'MGYP000943382481', 'MGYP001109075450', 'MGYP001026457211',
+        'MGYP000903055264', 'MGYP000105971398', 'MGYP000857132015',
+        'MGYP000938227591', 'MGYP001111649333', 'MGYP001014624706',
+        'MGYP001113175195', 'MGYP000927001424', 'MGYP001042963321',
+        'MGYP000375884440', 'MGYP000926342024', 'MGYP000897261510',
+        'MGYP000275629218', 'MGYP001132282603', 'MGYP001060020276',
+        'MGYP001148274161', 'MGYP000984946471', 'MGYP000375885292',
+        'MGYP000860601650', 'MGYP001028524128', 'MGYP000919957766',
+        'MGYP000922690997', 'MGYP000881128262', 'MGYP001135915538',
+        'MGYP000970802268', 'MGYP001145179480', 'MGYP001001197996',
+        'MGYP001107003845'
+    ]
     # Retrieve cluster members
     cluster_sequences = seed.get_sequences_fasta(cluster_members)
     # Set ending time of the method

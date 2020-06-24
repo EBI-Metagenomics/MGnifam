@@ -121,8 +121,8 @@ class Bjob(object):
         match = re.search(r'^(\S+)\s+(\S+)\s+(\S+)\s+', out.stdout)
         # Case row format does not match
         if not match:
-            # Raise new error
-            raise AttributeError('Can not parse job status')
+            # Don't know if bjob is done or not, but for sure it is exited
+            return 'EXIT'
         # Get job id, user name and job status
         found_job_id = match.group(1)
         found_user_name = match.group(2)
