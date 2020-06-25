@@ -21,6 +21,7 @@ sys.path.append(os.path.dirname(os.path.realpath(__file__) + '/..'))
 # Custom dependencies
 from src.msa import MSA
 from src.bjob import Bjob
+from src.transform import Transform
 from src.transform import Compose
 from src.transform import OccupancyTrim
 from src.transform import OccupancyFilter
@@ -164,6 +165,144 @@ def make_batch_clusters(cluster_names, batch_path, env=os.environ.copy(), log=di
     log['num_mgnifam'] = len(mgnifam_clusters)  # Number of MGnifam clusters
     log['num_bias'] = len(bias_clusters)  # Number of BIAS discarded clusters
     log['num_uniprot'] = len(uniprot_clusters)  # Number of Uniprot discarded clusters
+
+
+# Trim SEED alignments
+def trim_alignments(clusters_paths, transform, out_path):
+    """Trim alignments and plot results
+    For each cluster in <clusters_paths>, take SEED alignment and rename it as
+    SEED_original. Afterwards, create a new SEED alignment by automatically
+    trimming the original one. Automatic trimming is done by feeding alignments
+    to transform pipeline.
+
+    Args
+    clusters_paths (list(str))      List of clusters directories, named after
+                                    cluster name itself
+    transform (transform.Transform) Transformer which will be fed with original
+                                    SEED alignment and produce the trimmed one
+    out_path (str)                  Path where to store generic outputs such as
+                                    trimming summary plot
+    """
+    # Initialize occupancy
+    pre_occ, post_occ = list(), list()
+    # Initialize conservation
+    pre_cnv, post_cnv = list(), list()
+    # Initialize prettiness
+    pre_pty, post_pty = list(), list()
+    # For every file in build, run pfbuild again
+    for cluster_path in cluster_paths:
+        # Get cluster name
+        cluster_name = os.path.basename(cluster_path)
+        # Rename original cluster SEED alignment
+        shutil.move(cluster_path + '/SEED', cluster_path + '/SEED_original')
+        # Load multiple seed alignment from file
+        seed = MSA().from_aln(cluster_path + '/SEED_original')
+
+        # Initialize pre-trimming plot
+        fig = plt.figure(constrained_layout=True, figsize=(20, 10))
+        # Define axes grid
+        grid = fig.add_gridspec(2, 4)
+        # Add main title
+        fig.suptitle('Pre-trimming multiple sequence alignment (MSA)')
+        # Initialize axis
+        axs = [
+            fig.add_subplot(grid[0, 0]),
+            fig.add_subplot(grid[0, 1]),
+            fig.add_subplot(grid[0, 2:]),
+            fig.add_subplot(grid[1, 0]),
+            fig.add_subplot(grid[1, 1]),
+            fig.add_subplot(grid[1, 2:])
+        ]
+        # Make plots in axes
+        Transform.plot_results(msa=seed, axs=axs)
+        # Make plot
+        plt.savefig(out_path + '/pre_trim.png')
+        plt.close()
+
+        # Update occupancy, conervation and prettyness before trimming
+        pre_pty.append(MSA.prettiness(seed.aln))
+        pre_occ.extend(MSA.occupancy(seed.aln)[0])
+        pre_cnv.extend(MSA.conservation(seed.aln)[0])
+
+        # Execute trimming, substitute original seed
+        seed = transform(seed)
+
+        # Initialize pre-trimming plot
+        fig = plt.figure(constrained_layout=True, figsize=(20, 10))
+        # Define axes grid
+        grid = fig.add_gridspec(2, 4)
+        # Add main title
+        fig.suptitle('Post-trimming multiple sequence alignment (MSA)')
+        # Initialize axis
+        axs = [
+            fig.add_subplot(grid[0, 0]),
+            fig.add_subplot(grid[0, 1]),
+            fig.add_subplot(grid[0, 2:]),
+            fig.add_subplot(grid[1, 0]),
+            fig.add_subplot(grid[1, 1]),
+            fig.add_subplot(grid[1, 2:])
+        ]
+        # Make plots in axes
+        Transform.plot_results(msa=seed, axs=axs)
+        # Make plot
+        plt.savefig(out_path + '/post_trim.png')
+        plt.close()
+
+        # Update occupancy, conervation and prettyness after trimming
+        post_pty.append(MSA.prettiness(seed.aln))
+        post_occ.extend(MSA.occupancy(seed.aln)[0])
+        post_cnv.extend(MSA.conservation(seed.aln)[0])
+
+        # Store new SEED alignment
+        seed.to_aln(cluster_path + '/SEED')
+
+    # Plot summary
+    fig, axs = plt.subplots(2, 3, figsize=(30, 15), sharex='col', sharey='col')
+    # Set titles
+    _ = axs[0, 0].set_title('Pre-trim prettiness')
+    _ = axs[0, 1].set_title('Pre-trim occupancy')
+    _ = axs[0, 2].set_title('Pre-trim conservation')
+    _ = axs[1, 0].set_title('Post-trim prettiness')
+    _ = axs[1, 1].set_title('Post-trim occupancy')
+    _ = axs[1, 2].set_title('Post-trim conservation')
+    # Plot prettiness (pre-trim)
+    _ = axs[0, 0].hist(x=pre_pty, bins=100)
+    _ = axs[0, 0].axvline(np.mean(pre_pty), color='r')
+    # Plot prettiness (post-trim)
+    _ = axs[1, 0].hist(x=post_pty, bins=100)
+    _ = axs[1, 0].axvline(np.mean(post_pty), color='r')
+    # Plot occupancy distribution (pre-trim)
+    _ = axs[0, 1].hist(
+        x=pre_occ,
+        density=True,
+        bins=100
+    )
+    _ = axs[0, 1].set_xlim(left=0.0, right=1.0)
+    # Plot occupancy distribution (post-trim)
+    _ = axs[1, 1].hist(
+        x=post_occ,
+        density=True,
+        bins=100
+    )
+    _ = axs[1, 1].set_xlim(left=0.0, right=1.0)
+    # Plot conservation distribution (pre-trim)
+    _ = axs[0, 2].hist(
+        x=pre_cnv,
+        density=True,
+        bins=100
+    )
+    _ = axs[0, 2].set_xlim(left=0.0)
+    # Plot conservation distribution (post-trim)
+    _ = axs[1, 2].hist(
+        x=post_cnv,
+        density=True,
+        bins=100
+    )
+    _ = axs[1, 2].set_xlim(left=0.0)
+    # Save figure to file
+    _ = plt.savefig(out_path + '/trim.png')
+    # Close plot
+    _ = plt.close()
 
 # Initialize log (dictionary)
 log = {
@@ -349,27 +488,11 @@ for cluster_path in glob.glob(out_dir + '/batch*/MGYP*'):
 # Define a common multiple sequence alignment transformation pipeline
 transform = Compose([
     # Exclude regions outside N- and C- terminal
-    OccupancyTrim(
-        # Use custom threshold:
-        # threshold = lambda x: np.mean(x) - np.std(x),
-        threshold=0.5,
-        # Set threshold inclusive
-        inclusive=True
-    ),
+    OccupancyTrim(threshold=0.4, inclusive=True),
     # Exclude sequences with less than half occupancy
-    OccupancyFilter(
-        # Use custom threshold:
-        threshold=0.4,
-        # Set threshold inclusive
-        inclusive=True
-    ),
+    OccupancyFilter(threshold=0.5, inclusive=True),
     # Make non redundant
-    MakeNonRedundant(
-        # Define redundancy threshold
-        threshold=0.8,
-        # Set threshold exclusive
-        inclusive=False
-    )
+    MakeNonRedundant(threshold=0.8, inclusive=False)
 ])
 # Get list of clusters paths
 cluster_paths = glob.glob(build_path + '/MGYP*')
@@ -380,83 +503,8 @@ print('There are {:d} clusters in build: {}'.format(
     # List all folder names
     ', '.join([os.path.basename(path) for path in cluster_paths])
 ))
-
-# Initialize occupancy
-pre_occ, post_occ = list(), list()
-# Initialize conservation
-pre_cnv, post_cnv = list(), list()
-# Initialize prettiness
-pre_pty, post_pty = list(), list()
-# For every file in build, run pfbuild again
-for cluster_path in cluster_paths:
-    # Get cluster name
-    cluster_name = os.path.basename(cluster_path)
-    # Load multiple seed alignment from file
-    seed = MSA().from_aln(cluster_path + '/SEED')
-
-    # Update occupancy, conervation and prettyness before trimming
-    pre_pty.append(MSA.prettiness(seed.aln))
-    pre_occ.extend(MSA.occupancy(seed.aln)[0])
-    pre_cnv.extend(MSA.conservation(seed.aln)[0])
-
-    # Execute trimming, substitute original seed
-    seed = transform(seed)
-
-    # Update occupancy, conervation and prettyness after trimming
-    post_pty.append(MSA.prettiness(seed.aln))
-    post_occ.extend(MSA.occupancy(seed.aln)[0])
-    post_cnv.extend(MSA.conservation(seed.aln)[0])
-
-    # Store new SEED alignment
-    seed.to_aln(cluster_path + '/SEED')
-
-# Plot summary
-fig, axs = plt.subplots(2, 3, figsize=(30, 15), sharex='col', sharey='col')
-# Set titles
-_ = axs[0, 0].set_title('Pre-trim prettiness')
-_ = axs[0, 1].set_title('Pre-trim occupancy')
-_ = axs[0, 2].set_title('Pre-trim conservation')
-_ = axs[1, 0].set_title('Post-trim prettiness')
-_ = axs[1, 1].set_title('Post-trim occupancy')
-_ = axs[1, 2].set_title('Post-trim conservation')
-# Plot prettiness (pre-trim)
-_ = axs[0, 0].hist(x=pre_pty, bins=100)
-_ = axs[0, 0].axvline(np.mean(pre_pty), color='r')
-# Plot prettiness (post-trim)
-_ = axs[1, 0].hist(x=post_pty, bins=100)
-_ = axs[1, 0].axvline(np.mean(post_pty), color='r')
-# Plot occupancy distribution (pre-trim)
-_ = axs[0, 1].hist(
-    x=pre_occ,
-    density=True,
-    bins=100
-)
-_ = axs[0, 1].set_xlim(left=0.0, right=1.0)
-# Plot occupancy distribution (post-trim)
-_ = axs[1, 1].hist(
-    x=post_occ,
-    density=True,
-    bins=100
-)
-_ = axs[1, 1].set_xlim(left=0.0, right=1.0)
-# Plot conservation distribution (pre-trim)
-_ = axs[0, 2].hist(
-    x=pre_cnv,
-    density=True,
-    bins=100
-)
-_ = axs[0, 2].set_xlim(left=0.0)
-# Plot conservation distribution (post-trim)
-_ = axs[1, 2].hist(
-    x=post_cnv,
-    density=True,
-    bins=100
-)
-_ = axs[1, 2].set_xlim(left=0.0)
-# Save figure to file
-_ = plt.savefig(out_dir + '/trim.png')
-# Close plot
-_ = plt.close()
+# Make trim
+trim_alignments(cluster_paths, transform, out_dir)
 
 # Debug
 print('Clusters for pfbuild:\n{}'.format('\n'.join(cluster_paths)))

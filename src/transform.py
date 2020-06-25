@@ -1,5 +1,9 @@
-from src.msa import MSA
+# Common dependencies
+import matplotlib.pyplot as plt
 import numpy as np
+
+# Custom dependecies
+from src.msa import MSA
 
 
 class Transform(object):
@@ -58,6 +62,51 @@ class Transform(object):
             raise NotImplementedError('Given threshold function is not valid!')
         # Return threshold function
         return threshold_fn
+
+    # Make plots for assessing transformation results
+    @classmethod
+    def plot_results(cls, msa, axs):
+        """Plot transformation results
+        This function takes as input a MSA (either transformed or not) and
+        returns some plots (axes) which allow to assess transformation results
+        goodness.
+
+        Args
+        msa (msa.MSA)   Multiple sequence alignment instance
+        axs (plt.axes)  Axes (flat) list where to make plots, ordered:
+                        axs[0] is the msa coloured by occupancy,
+                        axs[1] is the occupancy distribution,
+                        axs[2] is the occupation per position scatter,
+                        axs[3] is the msa coloured by conservation,
+                        axs[4] is the conservation distribution,
+                        axs[5] is the conservation per position scatter
+
+        Return
+        (plt.axes)      Updated axes
+        """
+
+        # Occupancy msa
+        axs[0].set_title('MSA, coloured by occupancy')
+        msa.plot_heatmap(score='occupancy', ax=axs[0])
+        # Occupancy distribution
+        axs[1].set_title('Occupancy distribution')
+        msa.plot_hist(score='occupancy', density=True, ax=axs[1])
+        # Occupancy scatter
+        axs[2].set_title('Occupancy per aligned position')
+        msa.plot_scatter(score='occupancy', ax=axs[2])
+
+        # Conservation msa
+        axs[3].set_title('MSA, coloured by conservation')
+        msa.plot_heatmap(score='conservation', ax=axs[3])
+        # Conservation distribution
+        axs[4].set_title('Conservation distribution')
+        msa.plot_hist(score='conservation', density=True, ax=axs[4])
+        # Conservation scatter
+        axs[5].set_title('Conservation per aligned position')
+        msa.plot_scatter(score='conservation', ax=axs[5])
+
+        # Return updated axes
+        return axs
 
 
 class Compose(Transform):
@@ -263,14 +312,96 @@ class MakeNonRedundant(Transform):
 # Test
 if __name__ == '__main__':
 
-    # Read test multiple sequence alignment
-    msa = MSA().from_aln('../data/MGYP001224746368/SEED')
-    # Debug
-    print('Input multiple sequence alignment has shape {}'.format(msa.aln.shape))
+    # Define path to input seed
+    SEED_PATH = './data/MGYP001203360481/SEED'
 
-    # Define non redundancy parameters
-    transform = MakeNonRedundant(threshold=0.8, inclusive=True)
-    # Apply non redundancy to input msa
-    msa = transform(msa)
+    # Define transformation pipeline
+    transform = Compose([
+        # Exclude regions outside N- and C- terminal
+        OccupancyTrim(threshold=0.4, inclusive=True),
+        # Exclude sequences with less than half occupancy
+        OccupancyFilter(threshold=0.5, inclusive=True),
+        # Make non redundant with 80 percent threshold
+        MakeNonRedundant(threshold=0.8, inclusive=False)
+    ])
+
+    # Read test multiple sequence alignment
+    pre_trim = MSA().from_aln(SEED_PATH)
     # Debug
-    print('Filtered multiple sequence alignment has shape {}'.format(msa.aln.shape))
+    print('Input multiple sequence alignment has shape', pre_trim.aln.shape)
+
+    # Apply non redundancy to input msa
+    post_trim = transform(pre_trim)
+    # Debug
+    print('Filtered multiple sequence alignment has shape', post_trim.aln.shape)
+
+    # Initialize new plot for comparing pre- transformation scores
+    fig = plt.figure(constrained_layout=True, figsize=(20, 10))
+    # Define axes grid
+    grid = fig.add_gridspec(2, 4)
+    # Add main title
+    fig.suptitle('Pre-trimming multiple sequence alignment (MSA)')
+    # Initialize axis
+    axs = [
+        fig.add_subplot(grid[0, 0]),
+        fig.add_subplot(grid[0, 1]),
+        fig.add_subplot(grid[0, 2:]),
+        fig.add_subplot(grid[1, 0]),
+        fig.add_subplot(grid[1, 1]),
+        fig.add_subplot(grid[1, 2:])
+    ]
+    # Make plots in axes
+    Transform.plot_results(msa=pre_trim, axs=axs)
+    # Show plot
+    plt.show()
+    plt.close()
+
+    # Initialize new plot for comparing pre- transformation scores
+    fig = plt.figure(constrained_layout=True, figsize=(20, 10))
+    # Define axes grid
+    grid = fig.add_gridspec(2, 4)
+    # Add main title
+    fig.suptitle('Post-trimming multiple sequence alignment (MSA)')
+    # Initialize axis
+    axs = [
+        fig.add_subplot(grid[0, 0]),
+        fig.add_subplot(grid[0, 1]),
+        fig.add_subplot(grid[0, 2:]),
+        fig.add_subplot(grid[1, 0]),
+        fig.add_subplot(grid[1, 1]),
+        fig.add_subplot(grid[1, 2:])
+    ]
+    # Make plots in axes
+    Transform.plot_results(msa=post_trim, axs=axs)
+    # Show plot
+    plt.show()
+    plt.close()
+
+    # Debug
+    print(SEED_PATH + '_trimmed')
+
+    # Save to disk
+    post_trim.to_aln(SEED_PATH + '_trimmed')
+    # Reload from disk
+    post_trim = MSA().from_aln(SEED_PATH + '_trimmed')
+
+    # Initialize new plot for comparing pre- transformation scores
+    fig = plt.figure(constrained_layout=True, figsize=(20, 10))
+    # Define axes grid
+    grid = fig.add_gridspec(2, 4)
+    # Add main title
+    fig.suptitle('Post-trimming multiple sequence alignment (MSA), loaded from disk')
+    # Initialize axis
+    axs = [
+        fig.add_subplot(grid[0, 0]),
+        fig.add_subplot(grid[0, 1]),
+        fig.add_subplot(grid[0, 2:]),
+        fig.add_subplot(grid[1, 0]),
+        fig.add_subplot(grid[1, 1]),
+        fig.add_subplot(grid[1, 2:])
+    ]
+    # Make plots in axes
+    Transform.plot_results(msa=post_trim, axs=axs)
+    # Show plot
+    plt.show()
+    plt.close()

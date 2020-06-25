@@ -88,10 +88,6 @@ class MSA(object):
 
     # Load from aligned file
     def from_aln(self, in_path):
-        # # Initialize matrix as list (will be casted to numpy later)
-        # aln = list()
-        # # Initialize sequence accession and positions
-        # acc, beg, end = list(), list(), list()
         # Initialize entries dictionary (key is accession)
         entries = dict()
         # Read file
@@ -210,18 +206,6 @@ class MSA(object):
         _ = ax.set_yticks(y)
         # Rotate the tick labels and set their alignment.
         _ = plt.setp(ax.get_xticklabels(), rotation=90, ha='right', rotation_mode='anchor')
-        # # Loop over data dimensions and create text annotations.
-        # for i in range(n):
-        #     for j in range(m):
-        #         # Set text
-        #         _ = ax.text(
-        #             # Set text in correct cell
-        #             j, i, msa.aln[i, j],
-        #             # Set text style
-        #             ha='center',
-        #             va='center',
-        #             color='w'
-        #         )
         # Return updated axis
         return ax
 
@@ -242,13 +226,6 @@ class MSA(object):
             raise NotImplementedError('Scoring method is not defined!')
         # Make scatterplot
         _ = ax.plot(x, y, '.-')
-        # # Compute 0.05, 0.5 (median) and 0.95 quantiles
-        # lq, median, uq = tuple(np.quantile(y, [0.2, 0.5, 0.8]))
-        # Plot horizontal lines
-        # _ = ax.axhline(np.mean(y), 0, c='r')  # Mean
-        # _ = ax.axhline(median, 0, m, c='r')  # Median
-        # _ = ax.axhline(lq, 0, m, c='r')  # Lower quantile
-        # _ = ax.axhline(uq, 0, m, '-r')  # Upper quantile
         # Set x ticks
         _ = ax.set_xticks(np.arange(0, m, 50))
         # Rotate the tick labels and set their alignment.
@@ -271,13 +248,6 @@ class MSA(object):
             raise NotImplementedError('Scoring method is not defined!')
         # Make scatterplot
         _ = ax.hist(y, bins=bins, density=density, **kwargs)
-        # # Compute 0.05, 0.5 (median) and 0.95 quantiles
-        # lq, median, uq = tuple(np.quantile(y, [0.2, 0.5, 0.8]))
-        # Plot horizontal lines
-        # _ = ax.axhline(np.mean(y), 0, c='r')  # Mean
-        # _ = ax.axhline(median, 0, m, c='r')  # Median
-        # _ = ax.axvline(lq, c='r')  # Lower quantile
-        # _ = ax.axhline(uq, 0, m, '-r')  # Upper quantile
         # Return updated axis
         return ax
 
