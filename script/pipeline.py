@@ -216,7 +216,7 @@ def trim_alignments(clusters_paths, transform, out_path):
         # Make plots in axes
         Transform.plot_results(msa=seed, axs=axs)
         # Make plot
-        plt.savefig(out_path + '/pre_trim.png')
+        plt.savefig(cluster_path + '/pre_trim.png')
         plt.close()
 
         # Update occupancy, conervation and prettyness before trimming
@@ -245,7 +245,7 @@ def trim_alignments(clusters_paths, transform, out_path):
         # Make plots in axes
         Transform.plot_results(msa=seed, axs=axs)
         # Make plot
-        plt.savefig(out_path + '/post_trim.png')
+        plt.savefig(cluster_path + '/post_trim.png')
         plt.close()
 
         # Update occupancy, conervation and prettyness after trimming
@@ -303,6 +303,7 @@ def trim_alignments(clusters_paths, transform, out_path):
     _ = plt.savefig(out_path + '/trim.png')
     # Close plot
     _ = plt.close()
+
 
 # Initialize log (dictionary)
 log = {

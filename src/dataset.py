@@ -52,7 +52,7 @@ class Dataset(object):
             chunk_file.write(sep.join(content))
 
 
-class Mgnify(Dataset):
+class MGnify(Dataset):
 
     # Chunking function
     def to_chunks(self, chunk_path='chunk{:03d}.tsv.gz', chunk_size=1e07):
@@ -87,7 +87,7 @@ class Mgnify(Dataset):
                 # Case index reached batch size
                 if (seq_index+1) % chunk_size == 0:
                     # Define chunk index
-                    chunk_index = seq_index // chunk_size
+                    chunk_index = int(seq_index // chunk_size)
                     # Persist chunk to disk
                     self.write_chunk(chunk_path, chunk_index, seq_batch, sep='\n')
                     # Reinitialize chunk content
@@ -97,13 +97,54 @@ class Mgnify(Dataset):
             # Persist last chunk, if any
             if seq_batch:
                 # Define chunk index
-                chunk_index = seq_index // chunk_size
+                chunk_index = int(seq_index // chunk_size)
                 # Persist chunk to disk
                 self.write_chunk(chunk_path, chunk_index, seq_batch, sep='\n')
 
     # Search function
     def search(self, sequences_acc):
-        raise NotImplementedError
+        """Retrieve sequences residues
+        Takes a list of sequences accessions and search for the associated
+        entry by scanning underlying fasta file headers.
+
+        Args
+        sequences_acc (list)    List of sequences accession numbers whose
+                                residues must be found in given fasta file
+
+        Return
+        (dict(str: str))        Dictionary containing sequences accession
+                                numbers as keys and fasta entries as values
+        """
+        # Cast cluster names to set
+        sequences_acc = set(sequences_acc)
+        # Initialize output dict(sequence acc: fasta entry)
+        sequences = dict()
+        # Verbose out
+        if verbose:
+            print('Reading sequences file', self.path)
+        # Open file with defined file handler
+        with self.open_file(self.path) as fasta_file:
+            # Define fasta entries iterator
+            fasta_iterator = tqdm(
+                Fasta.read(fasta_file),  # Input iterator
+                disable=(not verbose),  # Set verbose
+                file=sys.stdout  # Force printing to stdout
+            )
+            # Loop through each entry in input fasta file
+            for entry in fasta_iterator:
+                # Split entry in header and residues
+                header, resiudes = entry.split('\n')
+                # Get accession number from header
+                acc = str(re.search(r'^(\S+)\s', header).group(1))
+                # Case accession is one of the searched ones
+                if acc in sequences_acc:
+                    # Store entry
+                    sequences[acc] = entry
+                # Case all sequences have been found
+                if len(sequences) == len(sequences_acc):
+                    break  # Early stopping
+        # Return filled sequences dictionary
+        return sequences
 
 
 class Cluster(Dataset):
@@ -138,7 +179,7 @@ class Cluster(Dataset):
                 # Case index reached batch size
                 if (seq_index+1) % chunk_size == 0:
                     # Define chunk index
-                    chunk_index = seq_index // chunk_size
+                    chunk_index = int(seq_index // chunk_size)
                     # Persist chunk to disk
                     self.write_chunk(chunk_path, chunk_index, seq_batch)
                     # Reinitialize chunk content
@@ -148,7 +189,7 @@ class Cluster(Dataset):
             # Persist last chunk, if any
             if seq_batch:
                 # Define chunk index
-                chunk_index = seq_index // chunk_size
+                chunk_index = int(seq_index // chunk_size)
                 # Persist chunk to disk
                 self.write_chunk(chunk_path, chunk_index, seq_batch)
 
@@ -169,10 +210,13 @@ class Cluster(Dataset):
                                     sequences accession numbers associated with
                                     the key's cluster name
         """
-        # Parse cluster names to set
+        # Cast cluster names to set
         cluster_names = set(cluster_names)
         # Initialize output dictionary
-        sequences_acc = dict(cluster: list() for cluster in cluster_names)
+        sequences_acc = {cluster: list() for cluster in cluster_names}
+        # Verbose out
+        if verbose:
+            print('Reading clusters file', self.path)
         # Open dataset file
         with self.open_file(self.path) as file:
             # Define iterator
