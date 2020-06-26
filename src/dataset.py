@@ -1,4 +1,5 @@
 # Dependencies
+from tqdm import tqdm
 import glob
 import gzip
 import sys
@@ -221,7 +222,7 @@ class Cluster(Dataset):
         with self.open_file(self.path) as file:
             # Define iterator
             line_iterator = tqdm(
-                clusters_file,  # File line iterator
+                file,  # File line iterator
                 disable=(not verbose),  # Set verbose
                 file=sys.stdout  # Force printing to stdout
             )

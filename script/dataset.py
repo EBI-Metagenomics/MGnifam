@@ -47,7 +47,7 @@ ft_cluster = client.submit(
     # Chunking function to submit
     ds_cluster.to_chunks,
     # Formattable path of each chunk
-    chunk_path=OUT_PATH+'/data/clusters/chunk{:03d}.tsv.gz',
+    chunk_path=OUT_PATH+'/data/clusters/chunk{:04d}.tsv.gz',
     # Size (number of lines) of every cluster
     chunk_size=1e07
 )
@@ -61,9 +61,9 @@ ft_mgnify = client.submit(
     # Chunking function to submit
     ds_mgnify.to_chunks,
     # Formattable path of each chunk
-    chunk_path=OUT_PATH+'/data/mgnify/chunk{:03d}.fa.gz',
+    chunk_path=OUT_PATH+'/data/mgnify/chunk{:04d}.fa.gz',
     # Size (number of lines) of every cluster
-    chunk_size=1e08
+    chunk_size=1e06
 )
 
 # Initialize timers
