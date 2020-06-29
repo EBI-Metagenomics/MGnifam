@@ -6,7 +6,10 @@ Handle multiple sequence alignments
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
+import subprocess
+import tempfile
 import sys
+import os
 import re
 
 
@@ -354,87 +357,158 @@ class MSA(object):
         # Return redundancy matrix
         return redundancy
 
+
+class Muscle(object):
+
+    # Constructor
+    def __init__(self, cmd='muscle', env=os.environ.copy()):
+        # Store attributes
+        self.cmd = cmd
+        self.env = env
+
+    def run(self, sequences, verbose=False):
+        """
+        Takes as input list of n sequences, then creates a multiple sequence
+        alignment with n rows (one per sequence) and a nomber of coulums
+        m < m1 + m2 with m1 and m2 are the two longest sequences.
+
+        Args
+        sequences (list)    List of strings containing fasta entries
+        verbose (bool)      Wether to show verbose log or not
+
+        Return
+        (msa.MSA)           Instance of multiple sequence alignment
+        """
+        # Define a new temporary file containing input sequences
+        fasta_file = tempfile.NamedTemporaryFile(delete=False)
+        # Open temporary fasta file
+        with open(fasta_file.name, 'w') as ff:
+            # Get number of input sequences
+            n = len(sequences)
+            # Loop through each input entry
+            for i in range(n):
+                # Write input fasta sequences to temporary fasta file
+                ff.write(sequences[i] + '\n')
+
+        # Open new output temporary file
+        out_file = tempfile.NamedTemporaryFile(delete=False)
+        # Run Muscle multiple sequence alignment
+        cmd_out = subprocess.run(
+            capture_output=True,  # Capture command output
+            encoding='utf-8',  # Set output encoding to string
+            check=True,  # Check execution (error code)
+            env=self.env,  # Set command environment
+            # Define command line  arguments
+            args=[
+                # self.cmd, '-quiet',
+                self.cmd,
+                '-in', fasta_file.name,  # Path to input temporary file
+                '-out', out_file.name  # Path to output temporary file
+            ]
+        )
+
+        # Read output temporary file
+        with open(out_file.name, 'rb') as of:
+            # Debug
+            print(out_file.read().decode('utf-8'))
+
+        # Delete temporary files
+        os.remove(fasta_file.name)
+        os.remove(out_file.name)
+
 # Unit testing
 if __name__ == '__main__':
 
-    # Read multiple sequence alignment
-    msa = MSA().from_aln('data/MGYP001224746368/SEED')
-    # Check number of aligned sequences
-    print('There are %d aligned sequences with %d columns' % msa.aln.shape)
-    # Check first 5 rows
-    for i in range(0, min(5, msa.aln.shape[0])):
-        # Print sequence description
-        print('Sequence nr %d: %s from %d to %d' % (
-            i+1, msa.acc[i], msa.beg[i], msa.end[i]
-        ))
-        # Print actual sequence
-        print(''.join(msa.aln[i, :]))
-        print()
-
-    # # Test one hot encoder
-    # ohe = MSA.one_hot_encode(msa.aln, include_gap=True)
-    # # Check output
-    # print('Input shape is {}'.format(msa.aln.shape))
-    # print('Output shape is {}'.format(ohe.shape))
+    # # Read multiple sequence alignment
+    # msa = MSA().from_aln('data/MGYP001224746368/SEED')
+    # # Check number of aligned sequences
+    # print('There are %d aligned sequences with %d columns' % msa.aln.shape)
     # # Check first 5 rows
     # for i in range(0, min(5, msa.aln.shape[0])):
-    #     # Print a subsequence
-    #     print(msa.aln[i, 100:105])
-    #     # Print encoded subsequence
-    #     print(ohe[i, 100:105, :])
+    #     # Print sequence description
+    #     print('Sequence nr %d: %s from %d to %d' % (
+    #         i+1, msa.acc[i], msa.beg[i], msa.end[i]
+    #     ))
+    #     # Print actual sequence
+    #     print(''.join(msa.aln[i, :]))
+    #     print()
+    #
+    # # # Test one hot encoder
+    # # ohe = MSA.one_hot_encode(msa.aln, include_gap=True)
+    # # # Check output
+    # # print('Input shape is {}'.format(msa.aln.shape))
+    # # print('Output shape is {}'.format(ohe.shape))
+    # # # Check first 5 rows
+    # # for i in range(0, min(5, msa.aln.shape[0])):
+    # #     # Print a subsequence
+    # #     print(msa.aln[i, 100:105])
+    # #     # Print encoded subsequence
+    # #     print(ohe[i, 100:105, :])
+    #
+    # # Compute occupancy score
+    # occupancy, consensus = MSA.occupancy(msa.aln)
+    # # Compute conservation score
+    # conservation, consensus = MSA.conservation(msa.aln)
+    # # Check results
+    # print('Input alignment has shape {}'.format(msa.aln.shape))
+    # print('Occupancy scores has shape {}'.format(occupancy.shape))
+    # print('Conservation scores has shape {}'.format(conservation.shape))
+    # # Initialize table of results
+    # print('Column\tBest residue\t\tConservation\tOccupancy')
+    # # Results (consensus is a matrix with shape m positions x 20 amino acids)
+    # for j in range(0, min(consensus.shape[0], 100)):
+    #     # Get index of amino acid with best consensus
+    #     i = np.argmax(consensus[j, :-1])
+    #     # Get best results for this column
+    #     print('{:d}\t{:s} (freq={:.03f})\t\t{:.03f}\t\t{:.03f}'.format(
+    #         j+1,  # Current position/column in msa
+    #         MSA.res[i],  # Amino acid with highest frequency
+    #         consensus[j, i],  # Highest frequency
+    #         conservation[j],  # Conservation
+    #         occupancy[j]  # Occupancy
+    #     ))
+    #
+    # # Make complete trimming (keep none)
+    # trimmed = msa.trim(0, 0)
+    # # Test trimming
+    # print('Input alignment has shape {}'.format(msa.aln.shape))
+    # print('Trimmed alignment has shape {}'.format(trimmed.aln.shape))
+    # # Loop through each line in alignment
+    # for i in range(trimmed.aln.shape[0]):
+    #     print('{}:\tsequence {}\t{}-{}'.format(
+    #         i+1,  # Row number
+    #         trimmed.acc[i],  # Sequence accession
+    #         trimmed.beg[i],  # Sequence begin
+    #         trimmed.end[i]  # Sequence end
+    #     ))
+    #
+    # # Make redundancy matrix
+    # redundancy = MSA.redundancy(msa.aln)
+    # # Test redundancy
+    # print('Input alignment has shape {}'.format(msa.aln.shape))
+    # print('Redundacny matrix has shape {}'.format(redundancy.shape))
+    # print(redundancy)
+    #
+    # # Plot alignment as heatmap
+    # fig, ax = plt.subplots(1, 1, figsize=(30, 15))
+    # _ = ax.set_title('Multiple Sequence Alignment')
+    # _ = msa.plot_heatmap(score='conservation', ax=ax)
+    # _ = plt.show()
+    #
+    # # Plot alignment as scatterplot
+    # fig, ax = plt.subplots(1, 1, figsize=(30, 15))
+    # _ = ax.set_title('Multiple Sequence Alignment score')
+    # _ = msa.plot_scatter(score='conservation', ax=ax)
+    # _ = plt.show()
 
-    # Compute occupancy score
-    occupancy, consensus = MSA.occupancy(msa.aln)
-    # Compute conservation score
-    conservation, consensus = MSA.conservation(msa.aln)
-    # Check results
-    print('Input alignment has shape {}'.format(msa.aln.shape))
-    print('Occupancy scores has shape {}'.format(occupancy.shape))
-    print('Conservation scores has shape {}'.format(conservation.shape))
-    # Initialize table of results
-    print('Column\tBest residue\t\tConservation\tOccupancy')
-    # Results (consensus is a matrix with shape m positions x 20 amino acids)
-    for j in range(0, min(consensus.shape[0], 100)):
-        # Get index of amino acid with best consensus
-        i = np.argmax(consensus[j, :-1])
-        # Get best results for this column
-        print('{:d}\t{:s} (freq={:.03f})\t\t{:.03f}\t\t{:.03f}'.format(
-            j+1,  # Current position/column in msa
-            MSA.res[i],  # Amino acid with highest frequency
-            consensus[j, i],  # Highest frequency
-            conservation[j],  # Conservation
-            occupancy[j]  # Occupancy
-        ))
-
-    # Make complete trimming (keep none)
-    trimmed = msa.trim(0, 0)
-    # Test trimming
-    print('Input alignment has shape {}'.format(msa.aln.shape))
-    print('Trimmed alignment has shape {}'.format(trimmed.aln.shape))
-    # Loop through each line in alignment
-    for i in range(trimmed.aln.shape[0]):
-        print('{}:\tsequence {}\t{}-{}'.format(
-            i+1,  # Row number
-            trimmed.acc[i],  # Sequence accession
-            trimmed.beg[i],  # Sequence begin
-            trimmed.end[i]  # Sequence end
-        ))
-
-    # Make redundancy matrix
-    redundancy = MSA.redundancy(msa.aln)
-    # Test redundancy
-    print('Input alignment has shape {}'.format(msa.aln.shape))
-    print('Redundacny matrix has shape {}'.format(redundancy.shape))
-    print(redundancy)
-
-    # Plot alignment as heatmap
-    fig, ax = plt.subplots(1, 1, figsize=(30, 15))
-    _ = ax.set_title('Multiple Sequence Alignment')
-    _ = msa.plot_heatmap(score='conservation', ax=ax)
-    _ = plt.show()
-
-    # Plot alignment as scatterplot
-    fig, ax = plt.subplots(1, 1, figsize=(30, 15))
-    _ = ax.set_title('Multiple Sequence Alignment score')
-    _ = msa.plot_scatter(score='conservation', ax=ax)
-    _ = plt.show()
+    # Define multiple sequence alignment input test sequences
+    sequences = [
+        ">MGYP001026457211 PL=10 UP=0 BIOMES=0000000011000 LEN=188 CR=0\nNTTCENADRLGTIPADSYAKVNSPSFLGIPLTTTPKPDAPSTQIVNIEYLNSQPTYIRQKTAPEKALSGKLWIGNNNCLNAYNNDGWESVFSEVALSINALNAAVDQPTSPNDYSGQLKFTGKRKITALNLTNIKTTTSEYATVIGMRADNKELAYEFICIDNYIYMRTGKGDTWNNAISIISKFTSF",
+        ">MGYP000848664103 PL=00 UP=0 BIOMES=0000000011000 LEN=297 CR=1\nMAEYSSELDKITYAELALSLQNTIKNNLAHTKDQVIHVTQEDKNKWNQISDIPEATETKKGALTPQEKIKLKNIEERANNYTHPTSGVTAGQYIQVEVNAEGHVVAGHNPTKINTTCENADRLGTIPADSYAKVNSPSFLGIPLTTTPKPDAPSTQIVNIEYLNSQPTYIRQKTAPEKALSGKLWIGNNNCLNAYNNDGWQSVFSEVALSINALNAAVDQPTSPNDYSGQLKFTGKRKITALKLTNIKATTSEYATVIGMRADNRELAYEFICIDNYIYMRTGKGDTWNNAISIIKD",
+        ">MGYP001028524128 PL=01 UP=0 BIOMES=0000000011000 LEN=26 CR=0\nMAEYSSELDKITYAELALSLQNTIKN",
+        ">MGYP000854299633 PL=00 UP=0 BIOMES=0000000011000 LEN=297 CR=0\nMAEYSSELDKITYAELALSLQNTIKSNLAHTKDQVIHVTQEDKNKWNQISDIPEATETKKGALTPQEKIKLKNIEERANNYTHPTSGVTAGQYIQVEVNAEGHVVAGHNPTKINTTCENADRLGTIPADSYAKVNSPSFLGIPLTPTPKLDAPASQIVNIEYLNSQPTYIRQKTAPEKALSGKLWIGNNNCLNAYNNDGWQSVFSEVALSINALNTAVDQPTSPNDYSGQFKFTGKRKITALKLTNIKATTSEYATVIGMRADNRELAYEFICIDNYIYMRTGKGDTWNNAISIIKD"
+    ]
+    # Define a Muscle instance
+    muscle = Muscle()
+    # Run Muscle with input test sequences
+    muscle.run(sequences=sequences, verbose=True)

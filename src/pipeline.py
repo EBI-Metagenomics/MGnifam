@@ -122,8 +122,8 @@ class Seed(Pipeline):
             len(cluster_members.keys())  # Number of clusters
         ))
 
-        # Debug
-        print(json.dumps(cluster_members))
+        # # Debug
+        # print(json.dumps(cluster_members))
 
         # Reset timer
         time_beg = time.time()
@@ -142,9 +142,6 @@ class Seed(Pipeline):
         # Free unused memory
         del empty_clusters
 
-        # # Temporary list of sequences
-        # tmp = ['MGYP000848664103', 'MGYP000854299633', 'MGYP000861318196']
-
         # Initialize dict(sequence accession: fasta entry)
         cluster_sequences = dict()
         # Submit jobs for searching cluster members sequences
@@ -159,16 +156,10 @@ class Seed(Pipeline):
             # List of cluster datasets
             self.ds_mgnify
         )
-        # futures = self.dask_client.map(
-        #     # Search for cluster members in current chunk
-        #     lambda ds: ds.search(tmp),
-        #     # List of cluster datasets
-        #     self.ds_mgnify
-        # )
         # Retrieve found sequences (list of dict)
         results = self.dask_client.gather(futures)
-        # Debug
-        print('Debug', json.dumps(results))
+        # # Debug
+        # print('Debug', json.dumps(results))
         # Loop through resulting sequences dictionaries
         for i in range(len(results)):
             # Loop through retrieved sequence accession numbers
@@ -184,7 +175,7 @@ class Seed(Pipeline):
             time_took,  # Time required to distributed search
             len(cluster_sequences)  # Number of sequences
         ))
-        print(json.dumps(cluster_sequences))
+        # print(json.dumps(cluster_sequences))
 
         # Initialize list of clusters with mismatching sequences
         mismatch_clusters = list()
@@ -210,4 +201,4 @@ class Seed(Pipeline):
 
         # Debug
         print('Retrieved sequences:')
-        print(json.dumps(cluster_sequences))
+        print(json.dumps(cluster_sequences, indent=2))
