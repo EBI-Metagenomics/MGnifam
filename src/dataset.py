@@ -103,7 +103,7 @@ class MGnify(Dataset):
                 self.write_chunk(chunk_path, chunk_index, seq_batch, sep='\n')
 
     # Search function
-    def search(self, sequences_acc):
+    def search(self, sequences_acc, verbose=False):
         """Retrieve sequences residues
         Takes a list of sequences accessions and search for the associated
         entry by scanning underlying fasta file headers.
@@ -111,6 +111,7 @@ class MGnify(Dataset):
         Args
         sequences_acc (list)    List of sequences accession numbers whose
                                 residues must be found in given fasta file
+        verbose (bool)          Whether to print out verbose log
 
         Return
         (dict(str: str))        Dictionary containing sequences accession
@@ -136,7 +137,7 @@ class MGnify(Dataset):
                 # Split entry in header and residues
                 header, resiudes = entry.split('\n')
                 # Get accession number from header
-                acc = str(re.search(r'^(\S+)\s', header).group(1))
+                acc = re.search(r'^>(\S+)', header).group(1)
                 # Case accession is one of the searched ones
                 if acc in sequences_acc:
                     # Store entry
@@ -203,7 +204,7 @@ class Cluster(Dataset):
         Args
         cluster_names (list(str))   Names of the clusters whose sequences
                                     members must be retrieved
-        verbose (bool)              Wether to print out verbose log
+        verbose (bool)              Whether to print out verbose log
 
         Return
         (dict(str:list))            Dictionary whose keys are cluster names and

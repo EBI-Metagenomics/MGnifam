@@ -142,17 +142,33 @@ class Seed(Pipeline):
         # Free unused memory
         del empty_clusters
 
+        # # Temporary list of sequences
+        # tmp = ['MGYP000848664103', 'MGYP000854299633', 'MGYP000861318196']
+
         # Initialize dict(sequence accession: fasta entry)
         cluster_sequences = dict()
         # Submit jobs for searching cluster members sequences
         futures = self.dask_client.map(
             # Search for cluster members in current chunk
-            lambda ds: ds.search(cluster_members),
+            lambda ds: ds.search([
+                # Get i-th sequence accession in cluster named n
+                cluster_members[n][i]
+                for n in cluster_members.keys()
+                for i in range(len(cluster_members[n]))
+            ]),
             # List of cluster datasets
             self.ds_mgnify
         )
+        # futures = self.dask_client.map(
+        #     # Search for cluster members in current chunk
+        #     lambda ds: ds.search(tmp),
+        #     # List of cluster datasets
+        #     self.ds_mgnify
+        # )
         # Retrieve found sequences (list of dict)
         results = self.dask_client.gather(futures)
+        # Debug
+        print('Debug', json.dumps(results))
         # Loop through resulting sequences dictionaries
         for i in range(len(results)):
             # Loop through retrieved sequence accession numbers
@@ -164,11 +180,10 @@ class Seed(Pipeline):
         time_end = time.time()
         time_took = time_end - time_beg
         # Debug
-        print('Took {:.0f} seconds to search for {:d} sequences'.format(
+        print('Took {:.0f} seconds to search for {:d} sequences:'.format(
             time_took,  # Time required to distributed search
-            len(cluster_sequences.keys())  # Number of sequences
+            len(cluster_sequences)  # Number of sequences
         ))
-
         print(json.dumps(cluster_sequences))
 
         # Initialize list of clusters with mismatching sequences
@@ -178,16 +193,21 @@ class Seed(Pipeline):
             # Get sequence accession numbers for current cluster
             sequences_acc = set(cluster_members[cluster_name])
             # Case some sequence has not been retrieved
-            if sequence_acc - set(cluster_sequences.keys()):
+            if sequences_acc - set(cluster_sequences.keys()):
                 # Add cluster name to list of mismatching ones
                 mismatch_clusters.append(cluster_name)
         # Case there is at least one mismatching cluster
         if mismatch_clusters:
-            # Define new error messages
+            # Define new error message
             error_text = 'Could not retrieve all sequences for {:d} clusters: {}'.format(
                 len(mismatch_clusters),  # Number of mismatching clusters
                 ', '.join(mismatch_clusters)  # Mismatching clusters
             )
-            raise KeyError()
+            # Raise new error
+            raise KeyError(error_text)
         # Free unused memory
         del mismatch_clusters
+
+        # Debug
+        print('Retrieved sequences:')
+        print(json.dumps(cluster_sequences))

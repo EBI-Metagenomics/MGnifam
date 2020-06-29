@@ -31,7 +31,7 @@ ROOT_PATH = '/nfs/production/metagenomics/mgnifams/dclementel/MGnifam'
 # Define path to clusters file
 CLUSTERS_PATH = ROOT_PATH + '/data/clusters/chunk*.tsv.gz'
 # Define path to MGnify sequences
-MGNIFY_PATH = ROOT_PATH + '/data/mgnify/chunk*.tsv.gz'
+MGNIFY_PATH = ROOT_PATH + '/data/mgnify/chunk*.fa.gz'
 
 
 if __name__ == '__main__':
@@ -39,6 +39,7 @@ if __name__ == '__main__':
     # Initialize distributed cluster
     cluster = LSFCluster(
         cores=1,  # Number of cores per job
+        scheduler_port=39156,  # Port where scheduler will listen
         memory='2GB',  # Memory allocated per job
         walltime='02:00',  # Time before shutting down worker jobs
         log_directory=ROOT_PATH+'/tmp',  # Logs directory
