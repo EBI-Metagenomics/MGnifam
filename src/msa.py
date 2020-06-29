@@ -12,6 +12,9 @@ import sys
 import os
 import re
 
+# Custom dependencies
+from src.sequence import Fasta
+
 
 class MSA(object):
 
@@ -157,6 +160,42 @@ class MSA(object):
                 # Write sequence
                 out_file.write(line)
         # Return self, allows chaining
+        return self
+
+    # Load from fasta file
+    def from_fasta(self, in_file, acc_regex=r'^>(.*)[\n\r]*$'):
+        """
+        Args
+        in_file     (file)  Buffer for reading input fasta file
+        acc_regex   (str)   Regex used to extract accession number (or a
+                            generic id string) from fasta header lines
+                            (by default all the line without '>' character)
+
+        Return
+        self                Allows chaining
+        """
+        # Initialize alignment matrix as list (of numpy arrays)
+        aln = list()
+        # Initialize accession number, begin and end positions as lists
+        acc, beg, end = list(), list(), list()
+        # Loop through fasta file lines
+        for entry in Fasta.read(in_file):
+            # Split entry in header and residues
+            header, residues = tuple(entry.split('\n'))
+            # Save accession number / id
+            acc.append(re.search(acc_regex, header).group(1))
+            # Save residues for current aligned sequence
+            aln.append(list(residues))
+        # Update attributes
+        self.aln = np.array(aln)
+        self.acc = np.array(acc)
+        # Compute number of non-gap reisudes for each aligned sequence
+        not_gap = (self.aln != self.gap).sum(axis=1)
+        # Define begin position of each aligned sequence
+        self.beg = (not_gap > 0).astype(np.int)
+        # Define end position of each aligned sequence
+        self.end = not_gap.astype(np.int)
+        # Return reference to current object (allows chaining)
         return self
 
     # Plot alignment matrix as heatmap
@@ -366,7 +405,7 @@ class Muscle(object):
         self.cmd = cmd
         self.env = env
 
-    def run(self, sequences, verbose=False):
+    def run(self, sequences, acc_regex='^>(\S+)', verbose=False):
         """
         Takes as input list of n sequences, then creates a multiple sequence
         alignment with n rows (one per sequence) and a nomber of coulums
@@ -374,6 +413,9 @@ class Muscle(object):
 
         Args
         sequences (list)    List of strings containing fasta entries
+        acc_regex (str)     Regex used to extract accession number (or a
+                            generic id string) from fasta header lines
+                            (by default first string after '>' character)
         verbose (bool)      Wether to show verbose log or not
 
         Return
@@ -400,21 +442,30 @@ class Muscle(object):
             env=self.env,  # Set command environment
             # Define command line  arguments
             args=[
-                # self.cmd, '-quiet',
-                self.cmd,
+                self.cmd, '-quiet',  # Do not intercept command line output
+                # self.cmd,
                 '-in', fasta_file.name,  # Path to input temporary file
                 '-out', out_file.name  # Path to output temporary file
             ]
         )
 
+        # Initialize output multiple sequnece alignment
+        out_msa = MSA()
         # Read output temporary file
-        with open(out_file.name, 'rb') as of:
-            # Debug
-            print(out_file.read().decode('utf-8'))
+        with open(out_file.name, 'r') as of:
+            # # Debug
+            # print(out_file.read().decode('utf-8'))
+            # Read multiple sequence alignment from fasta file
+            out_msa = out_msa.from_fasta(of, acc_regex=acc_regex)
 
         # Delete temporary files
         os.remove(fasta_file.name)
         os.remove(out_file.name)
+
+        # Return output multiple sequence alignment
+        return out_msa
+
+
 
 # Unit testing
 if __name__ == '__main__':
@@ -511,4 +562,17 @@ if __name__ == '__main__':
     # Define a Muscle instance
     muscle = Muscle()
     # Run Muscle with input test sequences
-    muscle.run(sequences=sequences, verbose=True)
+    msa = muscle.run(sequences, acc_regex=r'^>(\S+)')
+    # Debug
+    print(msa.aln)
+    # Check number of aligned sequences
+    print('There are %d aligned sequences with %d columns' % tuple(msa.aln.shape))
+    # Check all test rows
+    for i in range(msa.aln.shape[0]):
+        # Print sequence description
+        print('Sequence nr %d: %s from %d to %d' % (
+            i+1, msa.acc[i], msa.beg[i], msa.end[i]
+        ))
+        # Print actual sequence
+        print(''.join(msa.aln[i, :]))
+        print()

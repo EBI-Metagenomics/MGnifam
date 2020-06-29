@@ -30,7 +30,7 @@ class Fasta(object):
                 # Check if there is a valid accession number set
                 if header:
                     # Store residues in current line
-                    residues += re.sub(r'[^a-zA-Z]+', '', line)
+                    residues += re.sub(r'[^a-zA-Z\-]+', '', line)
             # Case current line is header
             else:
                 # Define current header and residues as previous ones
