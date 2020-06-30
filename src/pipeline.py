@@ -202,3 +202,19 @@ class Seed(Pipeline):
         # Debug
         print('Retrieved sequences:')
         print(json.dumps(cluster_sequences, indent=2))
+
+    # Retrieve cluster members for a batch of clusters
+    def get_cluster_members(self, cluster_names):
+        raise NotImplementedError
+
+    # Retrieve cluster sequences for given sequences accession numbers
+    def get_fasta_sequences(self, sequences_acc):
+        raise NotImplementedError
+
+    # Compute compositional bias for every sequence
+    def compute_comp_bias(self, fasta_sequences):
+        raise NotImplementedError
+
+    # Make multiple sequence alignment
+    def align_sequences(self, fasta_sequences):
+        raise NotImplementedError
