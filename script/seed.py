@@ -64,6 +64,6 @@ if __name__ == '__main__':
     )
 
     # Define a single cluster name
-    cluster_names = ['MGYP000848664103']
+    cluster_names = ['MGYP001051398202']
     # Run the pipeline
     pipe(cluster_names=cluster_names)
