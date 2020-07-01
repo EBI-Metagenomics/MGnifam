@@ -400,7 +400,7 @@ class MSA(object):
 class Muscle(object):
 
     # Constructor
-    def __init__(self, cmd='muscle', env=os.environ.copy()):
+    def __init__(self, cmd=['muscle'], env=os.environ.copy()):
         # Store attributes
         self.cmd = cmd
         self.env = env
@@ -442,7 +442,7 @@ class Muscle(object):
             env=self.env,  # Set command environment
             # Define command line  arguments
             args=[
-                self.cmd, '-quiet',  # Do not intercept command line output
+                *self.cmd, '-quiet',  # Do not intercept command line output
                 # self.cmd,
                 '-in', fasta_file.name,  # Path to input temporary file
                 '-out', out_file.name  # Path to output temporary file

@@ -1,7 +1,9 @@
 # Dependencies
+from tqdm import tqdm
 import numpy as np
 import subprocess
 import tempfile
+import time
 import sys
 import os
 import re
@@ -34,6 +36,8 @@ class MobiDBLite(object):
         # Define temporary output file
         out_file = tempfile.NamedTemporaryFile(delete=False)
 
+
+
         # Initialize residues dict(acc: residues)
         residues = dict()
         # Fill residues dictionary
@@ -43,15 +47,23 @@ class MobiDBLite(object):
             # Store residues
             residues[acc] = list(r)
 
+        # Verbose log
+        if verbose:
+            print('Generating input fasta file...')
         # Make input fasta file
         with open(fasta_file.name, 'w') as ff:
             # Loop through each input sequence
-            for acc, seq in sequences.items():
+            for acc, seq in tqdm(sequences.items(), disable=(not verbose)):
                 # Define new header
                 header = '>' + str(acc)
                 # Write out fasta entry
                 ff.write(header + '\n' + ''.join(residues[acc]) + '\n')
 
+        # Verbose log
+        if verbose:
+            'Executing MobiDB Lite predictor...'
+        # Initialize timers
+        time_beg, time_end = time.time(), None
         # Run MobiDB Lite command
         cmd_out = subprocess.run(
             capture_output=True,  # Capture console output
@@ -64,13 +76,25 @@ class MobiDBLite(object):
                 fasta_file.name  # Path to input fasta file
             ]
         )
+        # Update timers
+        time_end = time.time()
+        # Verbose log
+        if verbose:
+            print('Command line output:', cmd_out) # Debug
+            print('Took {:.0f} seconds to predict disordered regions over {:d} sequences'.format(
+                time_end - time_beg,  # Time took to run
+                len(sequences)  # Number of input sequences
+            ))
 
+        # Verbose log
+        if verbose:
+            print('Fetching MobiDB Lite results...')
         # Initialize empty dict(acc: residues positions)
         disorder = dict()
         # Read output file
         with open(out_file.name, 'r') as of:
             # Read through each line of MobiDB Lite
-            for line in of:
+            for line in tqdm(of, disable=(not verbose)):
                 # Check if line is matching expected format
                 match = re.search(r'^(\S+)\s+(\d+)\s+(\d+)', line)
                 # Case line does not matches format
@@ -90,6 +114,13 @@ class MobiDBLite(object):
                     for i in range(len(residues[acc]))
                 ])
 
+        # Add non-predicted entries (as arrays of zeroes only)
+        for acc in set(sequences.keys()) - set(disorder.keys()):
+            # Get #residues for current accession
+            n = len(residues[acc])
+            # Create an array of zeroes with length #resdiues
+            disorder[acc] = [[0] * n]
+
         # Delete temporary files
         os.remove(fasta_file.name)
         os.remove(out_file.name)
@@ -100,8 +131,8 @@ class MobiDBLite(object):
 
 def compute_comp_bias(sequences):
     """Computes computational bias
-    Computational bias is just the rate of disordered residues over total
-    number of residues in a set of sequence.
+    Compositional bias is just the rate of disordered residues over total
+    number of residues in a set of sequences.
 
     Args
     sequences (dict(str: list))     Dictionary associating accession numbers
@@ -179,9 +210,9 @@ def compute_threshold(sequences, threshold=0, inclusive=False):
         # Turn boolean vector into integer 0/1 vector
         pred = pred.astype(np.int)
 
-        # Case no residue has been positively predicted
-        if not pred.sum():
-            continue  # Skip iteration
+        # # Case no residue has been positively predicted
+        # if not pred.sum():
+        #     continue  # Skip iteration
 
         # Otherwise, save thresholded prediction as list
         disorder[acc] = [pred.tolist()]
@@ -261,7 +292,7 @@ if __name__ == '__main__':
     # Make new instance of MobiDB Lite
     mdb_lite = MobiDBLite(env=env)
     # Run MobiDB Lite predictor, get disordered regions
-    disorder = mdb_lite.run(sequences)
+    disorder = mdb_lite.run(sequences, verbose=True)
     # Debug
     print('Predictions:')
     # print(json.dumps(disorder, indent=1))
