@@ -484,11 +484,11 @@ class Seed(Pipeline):
         # Loop through every cluster name
         for cluster_name in cluster_names:
             # Define a cluster sequences dict(sequence acc: fasta entry)
-            cluster_sequences = dict()
+            cluster_sequences = list()
             # Loop through each sequence accession in cluster
             for acc in cluster_members[cluster_name]:
                 # Save fasta sequence
-                cluster_sequences[acc] = fasta_sequences[acc]
+                cluster_sequences.append(fasta_sequences[acc])
             # Run distributed compositional bias
             futures.append(self.dask_client.submit(
                 self.make_sequences_aln_,
