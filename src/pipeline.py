@@ -2,6 +2,7 @@
 from dask.distributed import Client
 from tqdm import tqdm
 from glob import glob
+import numpy as np
 import time
 import json
 import sys
@@ -69,6 +70,27 @@ class Pipeline(object):
         else:
             raise ValueError('Given path is not valid')
 
+    # Update a log dictionary, eventually writing it out to a given path
+    @staticmethod
+    def update_log(log_old, log_new, log_path=None):
+        # Update log dictionary
+        for k, v in log_new.items():
+            log_old[k] = v
+        # Case log path is set
+        if isinstance(log_path, str) and log_path:
+            # Open file buffer
+            with open(log_path, 'w') as lf:
+                # Dump dictionary
+                json.dump(log_old, lf, indent=4)
+        # return new dictionary
+        return log_old
+
+
+class Release(Pipeline):
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError
+
 
 class Seed(Pipeline):
 
@@ -92,7 +114,23 @@ class Seed(Pipeline):
         self.dask_client = dask_client
 
     # Run Seed alignment (for a single cluster)
-    def run(self, cluster_names, cluster_dir, verbose=False):
+    def run(self, cluster_names, cluster_dir, verbose=False, log=False):
+
+        # Initialize log
+        log = {
+            # Path to output clusters directory
+            'cluster_path': '',
+            # Number of input cluster names
+            'num_clusters': 0,
+            # Number of sequences
+            'num_sequences': 0,
+            # Number of sequences per cluster
+            'cluster_sizes': 0,
+            # Compositional bias dict(cluster name: compositional bias)
+            'comp_bias': dict()
+        }
+        # Define log path (only if required)
+        log_path = os.path.join(cluster_dir, 'log.json') if log else ''
 
         # # Get clusters output directory
         # cluster_dir = os.path.dirname(cluster_dir)
@@ -100,27 +138,42 @@ class Seed(Pipeline):
         if not os.path.exists(cluster_dir):
             # Make directory
             os.mkdir(cluster_dir)
+        # Update log
+        self.update_log(log_path=log_path, log_old=log, log_new={
+            'cluster_path': cluster_dir
+        })
 
         # Retrieve cluster members from clusters .tsv dataset
         cluster_members = self.get_cluster_members(
             cluster_names=cluster_names,
             verbose=verbose
         )
+        # Update log
+        self.update_log(log_path=log_path, log_old=log, log_new={
+            'num_clusters': len(cluster_members),
+            'cluster_sizes': np.mean([
+                len(cluster)  # Take size of the current cluster
+                for cluster  # Get each cluster in cluster members
+                in cluster_members.values()  # Get cluster sequences
+            ])
+        })
 
         # Check cluster members raises error
         self.check_cluster_members(cluster_members)
 
         # Define sequences accession numbers list
-        sequences_acc = [
+        sequences_acc = set([
             # Get i-th sequence accession in cluster named n
             cluster_members[n][i]
             # For each cluster in cluster members
             for n in cluster_members
             # For each component of that cluster
             for i in range(len(cluster_members[n]))
-        ]
-        # # Debug
-        # print(sequences_acc)
+        ])
+        # Update log
+        self.update_log(log_path=log_path, log_old=log, log_new={
+            'num_sequences': len(sequences_acc)
+        })
 
         # Retrieve fasta sequences from MGnify .fa dataset
         fasta_sequences = self.get_fasta_sequences(
@@ -137,6 +190,10 @@ class Seed(Pipeline):
             fasta_sequences=fasta_sequences,
             verbose=verbose
         )
+        # Update log
+        self.update_log(log_path=log_path, log_old=log, log_new={
+            'comp_bias': comp_bias
+        })
 
         # TODO Remove clusters with compositional bias too high
 
@@ -149,12 +206,14 @@ class Seed(Pipeline):
                 # Make sub directory
                 os.mkdir(cluster_subdir)
 
-        # Make seed alignment
+        # Make seed alignments
         self.make_sequences_aln(
             cluster_members=cluster_members,
             fasta_sequences=fasta_sequences,
             cluster_dir=cluster_dir
         )
+
+
 
         # # Initialize cluster sequences dict(name: dict(seq acc: fasta entry))
         # cluster_sequences = dict()

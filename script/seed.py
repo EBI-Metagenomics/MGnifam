@@ -41,7 +41,7 @@ if __name__ == '__main__':
     cluster = LSFCluster(
         cores=1,  # Number of cores per job
         # scheduler_port=39156,  # Port where scheduler will listen
-        memory='2GB',  # Memory allocated per job
+        memory='4GB',  # Memory allocated per job
         walltime='04:00',  # Time before shutting down worker jobs
         # log_directory=ROOT_PATH+'/tmp/log',  # Logs directory
         use_stdin=True  # Pass commands as stdin
@@ -59,7 +59,7 @@ if __name__ == '__main__':
     print('Client:', client)
 
     # Instantiate new seed alignment pipeline
-    pl = Seed(
+    pipeline = Seed(
         clusters_path=CLUSTERS_PATH,
         mgnify_path=MGNIFY_PATH,
         dask_client=client
@@ -92,8 +92,16 @@ if __name__ == '__main__':
                 continue  # Skip iteration
             # Otherwise, add cluster name to input list
             cluster_names.append(match.group(1))
+            # Early stopping
+            if len(cluster_names) == 100:
+                break
 
     # Define output path
     cluster_out_dir = ROOT_PATH + '/tmp'
     # Run the pipeline
-    pl(cluster_names=cluster_names, cluster_dir=cluster_out_dir, verbose=True)
+    pipeline(
+        cluster_names=cluster_names,
+        cluster_dir=cluster_out_dir,
+        verbose=True,
+        log=True
+    )
