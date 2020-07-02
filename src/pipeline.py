@@ -349,79 +349,144 @@ class Seed(Pipeline):
                 )
             )
 
+    @staticmethod
+    def compute_comp_bias_(sequences, mobidb, threshold=1, inclusive=True):
+        """Compute compositional bias of a single cluster
+        First, calls MobiDB Lite to predict disordered regions
+        Then, applies a threshold over minimum number of predictions required
+        to define a reidue actually disordered.
+        Lastly, computes compositional bias over the thesholded predictions.
+
+        Args
+        sequences (dict(str: str))      Dictionary linking each cluster member
+                                        sequence accession number to the
+                                        associated fasta sequence
+        mobidb (disorder.MobiDBLite)    Instance of MobiDB Lite
+        threshold (int/str)             Threshold on sum of disorder predictions
+                                        in order to define a single residue
+                                        actually disordered
+        inclusive (bool)                Wether the threshold must be
+                                        inclusive (i.e. #pred >= threshold) or
+                                        exclusive (i.e. #pred > threshold)
+
+        Return
+        (float)                         Compositional bias
+        """
+        # Make disordered regions predictions
+        pred = mobidb.run(sequences=sequences)
+        # Apply threshold
+        pred = disorder.compute_threshold(
+            sequences=pred,
+            threshold=threshold,
+            inclusive=inclusive
+        )
+        # Compute compositional bias
+        return disorder.compute_comp_bias(pred)
+
     # Compute compositional bias for every sequence
     def compute_comp_bias(self, cluster_members, fasta_sequences, verbose=False):
 
         # Initialize timers
         time_beg, time_end = time.time(), None
 
-        # Initialize disorder dict(sequence acc: list of boolean lists)
-        disorder_sequences = dict()
-        # Get reference to MobiDB Lite instance
-        mobidb = self.mobidb
-        # Verbose log
-        if verbose:
-            print('Computing disordered regions for {:d} sequences...'.format(
-                len(fasta_sequences)
-            ))
-        # Run predictior on each  entry in fasta sequence dict(acc: fasta enry)
-        futures = self.dask_client.map(
-            # Function make a prediction over a single sequence
-            lambda acc: mobidb.run(
-                sequences={acc: fasta_sequences[acc]},
-                verbose=False
-            ),
-            # Map function over each accession number in fasta sequences
-            [*fasta_sequences.keys()]
-        )
-        # Get distributed computing results
-        results = self.dask_client.gather(futures)
-        # Loop through every result
-        for i in range(len(results)):
-            # Get i-th result
-            result = results[i]
-            # Loop through each sequence accession in i-th result
-            for acc in result.keys():
-                # Eventually make new entry in disorder dictionart
-                disorder_sequences.setdefault(acc, [])
-                # Append disorder predictions
-                disorder_sequences[acc] += result[acc]
-
-        # Update timers
-        time_end = time.time()
-        # Verbose log
-        if verbose:
-            # Get execution time summary
-            print('Took {:.0f} seconds to compute disordered regions for {:d} fasta sequences'.format(
-                time_end - time_beg,  # Time required to distributed search
-                len(disorder_sequences)  # Number of fasta sequences
-            ))
-
-        # Initialize compossitional bias dict(cluster name: comp bias)
+        # Initialize output dict(cluster name: compositional bias)
         comp_bias = dict()
-        # Verbose log
-        if verbose:
-            print('Computing compositional bias for {:d} sequences...'.format(
-                len(disorder_sequences)
-            ))
-        # For each cluster, compute compute compositional bias
-        for cluster_name in tqdm(cluster_members, disable=(not verbose)):
-            # Initialize current cluster disorder predictions
-            cluster_disorder = dict()
-            # Get disordered regions for current cluster sequences
+
+        # Get cluster names
+        cluster_names = [*cluster_members.keys()]
+
+        # Initialize futures list
+        futures = list()
+        # Loop through every cluster name
+        for cluster_name in cluster_names:
+            # Define a cluster sequences dict(sequence acc: fasta entry)
+            cluster_sequences = dict()
+            # Loop through each sequence accession in cluster
             for acc in cluster_members[cluster_name]:
-                # Store disordered regions for current cluster sequences
-                cluster_disorder[acc] = disorder_sequences[acc]
-            # Apply a threshold over disorder predictions
-            cluster_disorder = disorder.compute_threshold(
-                sequences=cluster_disorder,
+                # Save fasta sequence
+                cluster_sequences[acc] = fasta_sequences[acc]
+            # Run distributed compositional bias
+            futures.append(self.dask_client.submit(
+                self.compute_comp_bias_,
+                sequences=cluster_sequences,
+                mobidb=self.mobidb,
                 threshold=1,
                 inclusive=True
-            )
-            # Compute compositional bias
-            comp_bias[cluster_name] = disorder.compute_comp_bias(
-                sequences=cluster_disorder
-            )
+            ))
+        # Get results
+        results = self.dask_client.gather(futures)
+        # Associate cluster name to each compositional bias
+        for i in range(len(cluster_names)):
+            # Save compositional bias for current cluster
+            comp_bias[cluster_names[i]] = results[i]
+
+        # # Initialize disorder dict(sequence acc: list of boolean lists)
+        # disorder_sequences = dict()
+        # # Get reference to MobiDB Lite instance
+        # mobidb = self.mobidb
+        # # Verbose log
+        # if verbose:
+        #     print('Computing disordered regions for {:d} sequences...'.format(
+        #         len(fasta_sequences)
+        #     ))
+        # # Run predictior on each  entry in fasta sequence dict(acc: fasta enry)
+        # futures = self.dask_client.map(
+        #     # Function make a prediction over a single sequence
+        #     lambda acc: mobidb.run(
+        #         sequences={acc: fasta_sequences[acc]},
+        #         verbose=False
+        #     ),
+        #     # Map function over each accession number in fasta sequences
+        #     [*fasta_sequences.keys()]
+        # )
+        # # Get distributed computing results
+        # results = self.dask_client.gather(futures)
+        # # Loop through every result
+        # for i in range(len(results)):
+        #     # Get i-th result
+        #     result = results[i]
+        #     # Loop through each sequence accession in i-th result
+        #     for acc in result.keys():
+        #         # Eventually make new entry in disorder dictionart
+        #         disorder_sequences.setdefault(acc, [])
+        #         # Append disorder predictions
+        #         disorder_sequences[acc] += result[acc]
+        #
+        # # Update timers
+        # time_end = time.time()
+        # # Verbose log
+        # if verbose:
+        #     # Get execution time summary
+        #     print('Took {:.0f} seconds to compute disordered regions for {:d} fasta sequences'.format(
+        #         time_end - time_beg,  # Time required to distributed search
+        #         len(disorder_sequences)  # Number of fasta sequences
+        #     ))
+        #
+        # # Initialize compossitional bias dict(cluster name: comp bias)
+        # comp_bias = dict()
+        # # Verbose log
+        # if verbose:
+        #     print('Computing compositional bias for {:d} sequences...'.format(
+        #         len(disorder_sequences)
+        #     ))
+        # # For each cluster, compute compute compositional bias
+        # for cluster_name in tqdm(cluster_members, disable=(not verbose)):
+        #     # Initialize current cluster disorder predictions
+        #     cluster_disorder = dict()
+        #     # Get disordered regions for current cluster sequences
+        #     for acc in cluster_members[cluster_name]:
+        #         # Store disordered regions for current cluster sequences
+        #         cluster_disorder[acc] = disorder_sequences[acc]
+        #     # Apply a threshold over disorder predictions
+        #     cluster_disorder = disorder.compute_threshold(
+        #         sequences=cluster_disorder,
+        #         threshold=1,
+        #         inclusive=True
+        #     )
+        #     # Compute compositional bias
+        #     comp_bias[cluster_name] = disorder.compute_comp_bias(
+        #         sequences=cluster_disorder
+        #     )
 
         # Return dict(cluster name: compositional bias)
         return comp_bias
