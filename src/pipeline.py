@@ -127,8 +127,12 @@ class Seed(Pipeline):
             # Number of sequences per cluster
             'cluster_sizes': 0,
             # Compositional bias dict(cluster name: compositional bias)
-            'comp_bias': dict()
+            'comp_bias': dict(),
+            # Define total running time (seconds)
+            'time_took': 0.0
         }
+        # Initialize timers
+        time_beg, time_end = time.time(), None
         # Define log path (only if required)
         log_path = os.path.join(cluster_dir, 'log.json') if log else ''
 
@@ -210,8 +214,16 @@ class Seed(Pipeline):
         self.make_sequences_aln(
             cluster_members=cluster_members,
             fasta_sequences=fasta_sequences,
-            cluster_dir=cluster_dir
+            cluster_dir=cluster_dir,
+            verbose=verbose
         )
+
+        # Update timers
+        time_end = time.time()
+        # Save run duration (seconds)
+        self.update_log(log_path=log_path, log_old=log, log_new={
+            'time_took': float(time_end - time_beg)
+        })
 
 
 
@@ -420,90 +432,41 @@ class Seed(Pipeline):
             # Save compositional bias for current cluster
             comp_bias[cluster_names[i]] = results[i]
 
-        # # Initialize disorder dict(sequence acc: list of boolean lists)
-        # disorder_sequences = dict()
-        # # Get reference to MobiDB Lite instance
-        # mobidb = self.mobidb
-        # # Verbose log
-        # if verbose:
-        #     print('Computing disordered regions for {:d} sequences...'.format(
-        #         len(fasta_sequences)
-        #     ))
-        # # Run predictior on each  entry in fasta sequence dict(acc: fasta enry)
-        # futures = self.dask_client.map(
-        #     # Function make a prediction over a single sequence
-        #     lambda acc: mobidb.run(
-        #         sequences={acc: fasta_sequences[acc]},
-        #         verbose=False
-        #     ),
-        #     # Map function over each accession number in fasta sequences
-        #     [*fasta_sequences.keys()]
-        # )
-        # # Get distributed computing results
-        # results = self.dask_client.gather(futures)
-        # # Loop through every result
-        # for i in range(len(results)):
-        #     # Get i-th result
-        #     result = results[i]
-        #     # Loop through each sequence accession in i-th result
-        #     for acc in result.keys():
-        #         # Eventually make new entry in disorder dictionart
-        #         disorder_sequences.setdefault(acc, [])
-        #         # Append disorder predictions
-        #         disorder_sequences[acc] += result[acc]
-        #
-        # # Update timers
-        # time_end = time.time()
-        # # Verbose log
-        # if verbose:
-        #     # Get execution time summary
-        #     print('Took {:.0f} seconds to compute disordered regions for {:d} fasta sequences'.format(
-        #         time_end - time_beg,  # Time required to distributed search
-        #         len(disorder_sequences)  # Number of fasta sequences
-        #     ))
-        #
-        # # Initialize compossitional bias dict(cluster name: comp bias)
-        # comp_bias = dict()
-        # # Verbose log
-        # if verbose:
-        #     print('Computing compositional bias for {:d} sequences...'.format(
-        #         len(disorder_sequences)
-        #     ))
-        # # For each cluster, compute compute compositional bias
-        # for cluster_name in tqdm(cluster_members, disable=(not verbose)):
-        #     # Initialize current cluster disorder predictions
-        #     cluster_disorder = dict()
-        #     # Get disordered regions for current cluster sequences
-        #     for acc in cluster_members[cluster_name]:
-        #         # Store disordered regions for current cluster sequences
-        #         cluster_disorder[acc] = disorder_sequences[acc]
-        #     # Apply a threshold over disorder predictions
-        #     cluster_disorder = disorder.compute_threshold(
-        #         sequences=cluster_disorder,
-        #         threshold=1,
-        #         inclusive=True
-        #     )
-        #     # Compute compositional bias
-        #     comp_bias[cluster_name] = disorder.compute_comp_bias(
-        #         sequences=cluster_disorder
-        #     )
+        # Update timers
+        time_end = time.time()
+        # Verbose log
+        if verbose:
+            # Get execution time summary
+            print('Took {:.0f} seconds to compute disordered regions for {:d} fasta sequences'.format(
+                time_end - time_beg,  # Time required to distributed search
+                len(comp_bias)  # Number of fasta sequences
+            ))
 
         # Return dict(cluster name: compositional bias)
         return comp_bias
 
+    @staticmethod
+    def make_sequences_aln_(sequences, muscle, aln_path):
+        """Aligns a list of fasta sequences
+        Takes as input a list of sequences and aligns them, then store the
+        alignment as a .aln file.
+
+        Args
+        sequences (dict(str: str))
+        muscle (msa.Muscle)         Multiple Sequence Alignment (MSA) algorithm
+                                    used for generating output .aln file
+        path (str)                  Path to output multiple sequence alignment
+                                    file
+        """
+        # Make multiple sequence alignment
+        aln = muscle.run(sequences=sequences, acc_regex='>(\S+)', verbose=False)
+        # Store MSA to disk
+        aln.to_aln(out_path=aln_path)
+        # Free memory
+        del aln
+
     # Make multiple sequence alignment
     def make_sequences_aln(self, cluster_members, fasta_sequences, cluster_dir, verbose=False):
-
-        # # Initialize dict(cluster name: dict(sequence acc: fasta entry))
-        # cluster_sequences = dict()
-        # # Fill cluster sequences dict
-        # for cluster_name in cluster_members:
-        #     # Add current cluster entry
-        #     cluster_sequences.setdefault(cluster_name, list())
-        #     # Loop through each accession number in cluster members
-        #     for acc in cluster_members[cluster_name]:
-        #         # Add current fasta sequence to current cluster entry
-        #         cluster_sequences[cluster_name] += [fasta_sequences[acc]]
 
         # Initialize timers
         time_beg, time_end = time.time(), None
@@ -513,28 +476,27 @@ class Seed(Pipeline):
                 len(cluster_members)
             ))
 
-        # Get reference to muslce instance
-        muscle = self.muscle
-        # Feed cluster sequences to alignment algorithm
-        futures = self.dask_client.map(
-            # Given cluster name, align its inner sequences
-            lambda cluster_name: muscle.run(
-                sequences=[
-                    # Get list of all sequences in current cluster
-                    fasta_sequences[acc]
-                    # Loop through all current cluster members
-                    for acc in cluster_members[cluster_name]
-                ],
-                acc_regex='>(\S+)',
-                verbose=False
-            ).to_aln(
-                # Define where to store current multiple sequence alignment
-                out_path=os.path.join(cluster_dir, cluster_name, 'SEED')
-            ),
-            # Map function over each cluster name
-            [*cluster_members.keys()]
-        )
-        # Wait for all alignments to finish
+        # Get cluster names
+        cluster_names = [*cluster_members.keys()]
+
+        # Initialize futures list
+        futures = list()
+        # Loop through every cluster name
+        for cluster_name in cluster_names:
+            # Define a cluster sequences dict(sequence acc: fasta entry)
+            cluster_sequences = dict()
+            # Loop through each sequence accession in cluster
+            for acc in cluster_members[cluster_name]:
+                # Save fasta sequence
+                cluster_sequences[acc] = fasta_sequences[acc]
+            # Run distributed compositional bias
+            futures.append(self.dask_client.submit(
+                self.make_sequences_aln_,
+                sequences=cluster_sequences,
+                muscle=self.muscle,
+                aln_path=os.path.join(cluster_dir, cluster_name, 'SEED')
+            ))
+        # Get results
         self.dask_client.gather(futures)
 
         # Update timers

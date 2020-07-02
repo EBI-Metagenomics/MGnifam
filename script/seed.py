@@ -92,12 +92,9 @@ if __name__ == '__main__':
                 continue  # Skip iteration
             # Otherwise, add cluster name to input list
             cluster_names.append(match.group(1))
-            # Early stopping
-            if len(cluster_names) == 100:
-                break
 
     # Define output path
-    cluster_out_dir = ROOT_PATH + '/tmp'
+    cluster_out_dir = ROOT_PATH + '/tmp/seed'
     # Run the pipeline
     pipeline(
         cluster_names=cluster_names,
