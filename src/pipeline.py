@@ -9,6 +9,12 @@ import sys
 import os
 import re
 
+# Plotting libraries
+import matplotlib
+import matplotlib.pyplot as plt
+# Set plotting non-interactive
+matplotlib.use('Agg')
+
 # Custom dependencies
 import src.dataset as ds
 import src.disorder as disorder
@@ -196,8 +202,19 @@ class Seed(Pipeline):
         )
         # Update log
         self.update_log(log_path=log_path, log_old=log, log_new={
-            'comp_bias': comp_bias
+            'comp_bias': np.mean([*comp_bias.values()])
         })
+
+        # Plot compositional bias distribution
+        fig, ax = plt.subplots(figsize=(10, 5))
+        # Make plot
+        ax.set_title('Compositional bias per cluster')
+        ax.hist(comp_bias.values(), density=False, bins=100)
+        ax.set_xlim(left=0.0)
+        # Save plot
+        plt.savefig(os.path.join(cluster_dir, 'comp_bias.png'))
+        # Close plot
+        plt.close()
 
         # TODO Remove clusters with compositional bias too high
 
@@ -224,24 +241,6 @@ class Seed(Pipeline):
         self.update_log(log_path=log_path, log_old=log, log_new={
             'time_took': float(time_end - time_beg)
         })
-
-
-
-        # # Initialize cluster sequences dict(name: dict(seq acc: fasta entry))
-        # cluster_sequences = dict()
-        # # Fill cluster sequences dict
-        # for cluster_name in cluster_members:
-        #     # Add current cluster entry
-        #     cluster_sequences.setdefault(cluster_name, dict())
-        #     # Loop through each accession number in cluster members
-        #     for acc in cluster_members[cluster_name]:
-        #         # Add current fasta sequence to current cluster entry
-        #         cluster_sequences[cluster_name][acc] = fasta_sequences[acc]
-
-        # # Verbose log
-        # if verbose:
-        #     print('Retrieved sequences:')
-        #     print(json.dumps(cluster_sequences, indent=2))
 
     # Retrieve cluster members for a batch of clusters
     def get_cluster_members(self, cluster_names, verbose=False):
