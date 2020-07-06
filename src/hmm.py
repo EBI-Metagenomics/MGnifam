@@ -92,15 +92,15 @@ if __name__ == '__main__':
 
     # Define project root path
     ROOT_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')
-    # Define data path
-    DATA_PATH = os.path.join(ROOT_PATH, 'data')
     # Path to test seed file
-    SEED_PATH = os.path.join(DATA_PATH, 'MGYP001224746368', 'SEED_trimmed')
+    SEED_PATH = os.path.join(ROOT_PATH, 'tmp', 'MGYP001224746368', 'SEED_trimmed')
 
     # Grab an example MSA
     msa = MSA().from_aln(SEED_PATH)
     # Debug
     print('Input MSA has shape: {}'.format(msa.aln.shape))
 
-    # Define a new instance of hmmbuild
+    # Define a new instance of hmm build script
     hmm_build = HMMBuild()
+    # Run HMM build
+    hmm_build.run(msa)
