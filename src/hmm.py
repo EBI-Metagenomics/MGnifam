@@ -8,6 +8,7 @@ HMM against a given dataset (e.g. UniProt).
 
 # Dependecies
 import subprocess
+import tempfile
 import sys
 import os
 
@@ -45,26 +46,33 @@ class HMMBuild(HMMER):
         super(HMMBuild, self).__init__(cmd=cmd, env=env)
 
     # Run HMM build script
-    def run(self, msa, alphabet='amino'):
+    def run(self, msa, out_path, alphabet='amino'):
+
         # Initialize command line
         cmd = [*self.cmd]
+
         # Case alphabet type is not valid
         if alphabet not in self.alphabet:
             # Raise new error
             raise ValueError('Worng value for alphabet: {}'.format(alphabet))
         # Set type of alphabet used
-        cmd += ['--{}'.format(alphabet)]
+        cmd += ['--{:s}'.format(alphabet)]
+
+        # Set output file path
+        cmd += [out_path]
 
         # Define new input MSA temporary file
-        aln_file = tempfile.NamedTemporaryFile(delete=False)
-        # Write outinput MSA
+        aln_file = tempfile.NamedTemporaryFile(suffix='.aln', delete=False)
+        # Write out input MSA
         msa.to_aln(aln_file.name)
+        # Set input MSA file in script
+        cmd += [aln_file.name]
 
         # Run HMM build
         ran = subprocess.run(
             capture_output=True,  # Capture console output
             encoding='utf-8',  # Set output encoding
-            env=env,  # Set script environment
+            env=self.env,  # Set script environment
             args=cmd  # Set command line arguments
         )
 
@@ -103,4 +111,4 @@ if __name__ == '__main__':
     # Define a new instance of hmm build script
     hmm_build = HMMBuild()
     # Run HMM build
-    hmm_build.run(msa)
+    hmm_build.run(msa=msa, out_path=os.path.join(ROOT_PATH, 'tmp', 'hmm.out'))
