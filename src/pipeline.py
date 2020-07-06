@@ -205,16 +205,8 @@ class Seed(Pipeline):
             'comp_bias': np.mean([*comp_bias.values()])
         })
 
-        # Plot compositional bias distribution
-        fig, ax = plt.subplots(figsize=(10, 5))
-        # Make plot
-        ax.set_title('Compositional bias per cluster')
-        ax.hist(comp_bias.values(), density=False, bins=100)
-        ax.set_xlim(left=0.0)
-        # Save plot
-        plt.savefig(os.path.join(cluster_dir, 'comp_bias.png'))
-        # Close plot
-        plt.close()
+        # Plot compositional bias
+        self.plot_comp_bias(out_path=os.path.join(cluster_dir, 'comp_bias.png'))
 
         # TODO Remove clusters with compositional bias too high
 
@@ -234,6 +226,8 @@ class Seed(Pipeline):
             cluster_dir=cluster_dir,
             verbose=verbose
         )
+
+        # TODO: Make HMM
 
         # Update timers
         time_end = time.time()
@@ -443,6 +437,21 @@ class Seed(Pipeline):
 
         # Return dict(cluster name: compositional bias)
         return comp_bias
+
+    # Make a plot of compositional bias
+    def plot_comp_bias(self, comp_bias, out_path):
+        # Plot compositional bias distribution
+        fig, ax = plt.subplots(figsize=(10, 5))
+        # Make plot
+        ax.set_title('Compositional Bias distribution')
+        ax.set_xlabel('Compositional Bias')
+        ax.set_ylabel('Number of clusters')
+        ax.hist(comp_bias.values(), density=False, bins=100)
+        ax.set_xlim(left=0.0, right=1.0)
+        # Save plot
+        plt.savefig(out_path)
+        # Close plot
+        plt.close()
 
     @staticmethod
     def make_sequences_aln_(sequences, muscle, aln_path):
