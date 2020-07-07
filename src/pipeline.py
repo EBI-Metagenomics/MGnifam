@@ -239,7 +239,7 @@ class Seed(Pipeline):
             verbose=verbose
         )
 
-        # TODO: Search HMM against MGnify
+        # TODO Search HMM against MGnify
 
         # Update timers
         time_end = time.time()
@@ -528,7 +528,7 @@ class Seed(Pipeline):
                 len(cluster_members)
             ))
 
-    # Create Hidden Markov Models
+    # Create Hidden Markov Models (HMMs)
     def build_hmms(self, cluster_members, cluster_dir, verbose=False):
 
         # Initialize timers
@@ -538,9 +538,6 @@ class Seed(Pipeline):
             print('Building Hidden Markov Models (HMMs) for {:d} clusters...'.format(
                 len(cluster_members)
             ))
-
-        # Retrieve instance of hmmbuild program
-        hmm_build = self.hmm_build
 
         # Intialize futures container
         futures = list()
@@ -555,7 +552,7 @@ class Seed(Pipeline):
             # Run HMM build (distributed)
             futures.append(self.dask_client.submit(
                 # Function to be submitted
-                hmm_build.run,
+                self.hmm_build.run,
                 # Parameters to be feed to submitted function
                 msa_path=seed_path,  # Set path to input seed alignment
                 out_path=hmm_path,  # Set path to output file
@@ -573,3 +570,112 @@ class Seed(Pipeline):
                 time_end - time_beg,
                 len(cluster_members)
             ))
+
+    @staticmethod
+    def search_hmms_(hmm_search, hmm_path, target_ds):
+
+        # Initialize a temporary output file
+        out_file = tempfile.NamedTemporaryFile(delete=False)
+
+        # Search given hmm aganist given dataset using hmmsearch
+        hmm_search.run(
+            # Path to searched HMM file
+            hmm_path=hmm_path,
+            # Path to sequences target dataset
+            ds_path=target_ds.path,
+            # Path to per-domain output table
+            domtblout_path=out_file.name
+        )
+
+        # Initialize domtblout
+        domtblout = list()
+        # Open output temporary file
+        with open(out_file.name) as of:
+            # Save domtblout as list of rows
+            for row in hmm_search.iter_domtblout(of):
+                # Store current row
+                domtblout.append(row)
+
+        # Remove temporary output file
+        os.remove(out_file.name)
+
+        # Return per-domain table
+        return domtblout
+
+    # Search Hidden Markov Models (HMMs) against a dataset
+    def search_hmms(self, cluster_members, cluster_dir, target_ds, ds_size, verbose=False):
+        """Search multiple HMMs against given dataset
+
+        Args
+        cluster_members (iterable)  Contains names of clusters whose HMM must be
+                                    searched against given dataset
+        cluster_dir (str)           Root directory of clusters sub-directories
+        target_ds (list)            List of dataset chunks against which the
+                                    clusters Hidden Markov Models must be run
+                                    in a distributed way
+        ds_size (int)               Number of entries in input dataset, in total
+        verbose (bool)              Wether to return or not verbose output
+
+        Return
+        (list)                      Concatenated domtblout table, containing
+                                    all matches between HMMs and sequences
+        """
+
+        # Initialize a single HMM temporary file containing all built HMMs
+        hmm_temp = tempfile.NamedTemporaryFile(delete=False)
+        # Open write buffer to full HMM file (append)
+        hmm_file = open(hmm_temp.name, 'a')
+
+        # Loop through each cluster names
+        for cluster_name in cluster_members:
+
+            # Define full path to current HMM file
+            curr_path = os.path.join(custer_dir, cluster_name, 'HMM')
+            # Retrieve current hmm file
+            with open(curr_path, r) as curr_file:
+                # Loop thriugh every line of current HMM file
+                for line in curr_file:
+                    # Append line to full hmm file
+                    hmm_file.write(line)
+        # Close write buffer to full HMM file
+        hmm_file.close()
+
+        # Initialize futures container
+        futures = list()
+        # Loop through each dataset in <against_ds> list
+        for i in range(len(target_ds)):
+            # Distribute HMM search against target dataset
+            self.dask_client.submit(
+                # Function to submit
+                self.search_hmms_,
+                # Function parameters
+                hmm_search=self.hmm_search,
+                hmm_path=hmm_file.name,
+                target_ds=target_ds[i]
+            )
+        # Retrieve results
+        results = self.dask_client.gather(futures)
+        # Concatenate all results in a single table
+        domtblout = [
+            # Get j-th domtblout row of i-th dataset chunk
+            results[i][j]
+            # Loop through each dataset chunk result
+            for i in range(len(results))
+            # Loop through each row in i-th dataset chunk result
+            for j in range(len(results[i]))
+        ]
+        # Delete results (free space)
+        del results
+
+        # Delete temporary file
+        os.remove(hmm_temp.name)
+
+    # Wrapper for searching given HMMs against Mgnify dataset
+    def search_hmms_mgnify(self, *args, **kwargs):
+        # Call generic function
+        return self.search_hmms(*args, **kwargs, target_ds=self.ds_mgnify)
+
+    # # TODO Wrapper for searching given HMMs against UniProt dataset
+    # def search_hmms_mgnify(self, *args, **kwargs):
+    #     # Call generic function
+    #     return self.search_hmms(*args, **kwargs, target_ds=self.ds_uniprot)
