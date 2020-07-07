@@ -19,6 +19,7 @@ matplotlib.use('Agg')
 import src.dataset as ds
 import src.disorder as disorder
 import src.msa as msa
+import src.hmm as hmm
 
 
 class Pipeline(object):
@@ -104,7 +105,9 @@ class Seed(Pipeline):
     def __init__(
         self, clusters_path, mgnify_path, dask_client,
         mobidb_env=os.environ.copy(), mobidb_cmd=['mobidb_lite.py'],
-        muscle_env=os.environ.copy(), muscle_cmd=['muscle']
+        muscle_env=os.environ.copy(), muscle_cmd=['muscle'],
+        hmm_build_env=os.environ.copy(), hmm_build_cmd=['hmmbuild'],
+        hmm_search_env=os.environ.copy(), hmm_search_cmd=['hmmsearch']
     ):
         # Retrieve clusters dataset
         clusters_path = self.check_path(clusters_path)
@@ -116,6 +119,10 @@ class Seed(Pipeline):
         self.mobidb = disorder.MobiDBLite(cmd=mobidb_cmd, env=mobidb_env)
         # Initialize a new Muscle instance
         self.muscle = msa.Muscle(cmd=muscle_cmd, env=muscle_env)
+        # Initialize a new hmmbuild instance
+        self.hmm_build = hmm.HMMBuild()
+        # Initialize a new hmmsearch instance
+        self.hmm_search = hmm.HMMSearch()
         # Set client (Client(LocalCluster) by default)
         self.dask_client = dask_client
 
@@ -142,8 +149,6 @@ class Seed(Pipeline):
         # Define log path (only if required)
         log_path = os.path.join(cluster_dir, 'log.json') if log else ''
 
-        # # Get clusters output directory
-        # cluster_dir = os.path.dirname(cluster_dir)
         # Case output directory does not exits
         if not os.path.exists(cluster_dir):
             # Make directory
@@ -227,7 +232,14 @@ class Seed(Pipeline):
             verbose=verbose
         )
 
-        # TODO: Make HMM
+        # Make HMM
+        self.build_hmms(
+            cluster_members=cluster_members,
+            cluster_dir=cluster_dir,
+            verbose=verbose
+        )
+
+        # TODO: Search HMM against MGnify
 
         # Update timers
         time_end = time.time()
@@ -512,6 +524,52 @@ class Seed(Pipeline):
         # Verbose log
         if verbose:
             print('Took {:.0f} seconds to make {:d} multiple sequence alignments'.format(
+                time_end - time_beg,
+                len(cluster_members)
+            ))
+
+    # Create Hidden Markov Models
+    def build_hmms(self, cluster_members, cluster_dir, verbose=False):
+
+        # Initialize timers
+        time_beg, time_end = time.time(), None
+        # Verbose log
+        if verbose:
+            print('Building Hidden Markov Models (HMMs) for {:d} clusters...'.format(
+                len(cluster_members)
+            ))
+
+        # Retrieve instance of hmmbuild program
+        hmm_build = self.hmm_build
+
+        # Intialize futures container
+        futures = list()
+        # Loop through each cluster name
+        for cluster_name in cluster_members:
+            # Define path to current cluster
+            cluster_path = os.path.join(cluster_dir, cluster_name)
+            # Define path to current cluster seed alignment
+            seed_path = os.path.join(cluster_path, 'SEED')
+            # Define path to output Hidden Markov Model (HMM)
+            hmm_path = os.path.join(cluster_path, 'HMM')
+            # Run HMM build (distributed)
+            futures.append(self.dask_client.submit(
+                # Function to be submitted
+                hmm_build.run,
+                # Parameters to be feed to submitted function
+                msa_path=seed_path,  # Set path to input seed alignment
+                out_path=hmm_path,  # Set path to output file
+                name=cluster_name  # Set HMM name as current cluster name
+            ))
+
+        # Retrieve results
+        self.dask_client.gather(futures)
+
+        # Update timers
+        time_end = time.time()
+        # Verbose log
+        if verbose:
+            print('Took {:.0f} seconds to build {:d} Hidden Markov Models (HMMs)'.format(
                 time_end - time_beg,
                 len(cluster_members)
             ))
