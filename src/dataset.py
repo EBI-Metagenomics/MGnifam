@@ -1,5 +1,6 @@
 # Dependencies
 from tqdm import tqdm
+from tempfile import NamedTemporaryFile
 import glob
 import gzip
 import sys
@@ -10,6 +11,52 @@ import re
 from src.sequence import Fasta
 
 
+# Check if file is compressed by suffix
+def is_gzip(in_path):
+    # Return true if file name ends with .gz
+    return bool(re.search(r'\.gz$', in_path))
+
+
+# Open file even if it is gzipped
+def open_file(in_path, mode='r', gzip_mode='rt'):
+    """Open an eventually compressed file
+
+    Args
+    in_path (str)       Path to file which must be opened
+    mode (str)          Mode used to open given file path if not compressed
+    gzip_mode (str)     Mode used to open given fil if it is compressed
+
+    Return
+    (file)              Buffer to opened file with given mode
+    """
+    # Case file is gzipped
+    if is_gzip(in_path):
+        # Return uncompressed file buffer
+        return gzip.open(in_path, gzip_mode)
+    # Otherwise, return common file buffer
+    return open(in_path, mode)
+
+
+# Uncompress file
+def gunzip(in_path, out_path=None, out_suffix=''):
+    # Open file in read mode
+    in_file = open_file(in_path, 'r', 'rt')
+    # Case no output path is set
+    if not out_path:
+        # Define a new temporary file
+        temp_file = NamedTemporaryFile(suffix=out_suffix, delete=False)
+        # Set output path as temporary file path
+        out_path = temp_file.name
+    # Open output path in write mode
+    with open(out_path, 'w') as out_file:
+        # Loop through every input file path
+        for in_line in in_file:
+            # Write input line to output file
+            out_file.write(in_line)
+    # Return path to output file
+    return out_path
+
+
 class Dataset(object):
 
     # Constructor
@@ -17,12 +64,16 @@ class Dataset(object):
         # Store path to dataset
         self.path = path
 
-    # Abstract
-    def to_chunk(self, *args, **kwargs):
+    # Get dataset length (number of entries)
+    def __len__(self):
         raise NotImplementedError
 
-    # Abstract
-    def search(self, *args, **kwargs):
+    # (Abstract) Writes a dataset partition to file
+    def to_chunk(self, *args, chunk_path='chunk{:d}', chunk_size=1e06, **kwargs):
+        raise NotImplementedError
+
+    # (Abstract) Retrieves entries according to some parameters
+    def search(self, *args, ret_length=False, verbose=False, **kwargs):
         raise NotImplementedError
 
     @classmethod
@@ -54,6 +105,21 @@ class Dataset(object):
 
 
 class MGnify(Dataset):
+
+    # Get length (number of fasta sequences)
+    def __len__(self):
+        # Initialize output length
+        length = 0
+        # Open underlying file
+        with self.open_file(self.path) as fasta_file:
+            # Define fasta entries iterator
+            fasta_iter = Fasta.read(fasta_file)
+            # Loop through each entry in input fasta file
+            for entry in fasta_iter:
+                # Update dataset length
+                length += 1
+        # Return dataset length
+        return length
 
     # Chunking function
     def to_chunks(self, chunk_path='chunk{:03d}.tsv.gz', chunk_size=1e07):
@@ -103,7 +169,7 @@ class MGnify(Dataset):
                 self.write_chunk(chunk_path, chunk_index, seq_batch, sep='\n')
 
     # Search function
-    def search(self, sequences_acc, verbose=False):
+    def search(self, sequences_acc, ret_length=False, verbose=False):
         """Retrieve sequences residues
         Takes a list of sequences accessions and search for the associated
         entry by scanning underlying fasta file headers.
@@ -111,6 +177,9 @@ class MGnify(Dataset):
         Args
         sequences_acc (list)    List of sequences accession numbers whose
                                 residues must be found in given fasta file
+        ret_length (bool)       Wether to return the length of the searched
+                                target dataset (disables early stopping
+                                criterion)
         verbose (bool)          Whether to print out verbose log
 
         Return
@@ -119,8 +188,8 @@ class MGnify(Dataset):
         """
         # Cast cluster names to set
         sequences_acc = set(sequences_acc)
-        # Initialize output dict(sequence acc: fasta entry)
-        sequences = dict()
+        # Initialize output dict(sequence acc: fasta entry) and length
+        sequences, length = dict(), 0
         # Verbose out
         if verbose:
             print('Reading sequences file', self.path)
@@ -143,10 +212,17 @@ class MGnify(Dataset):
                     # Store entry
                     sequences[acc] = entry
                 # Case all sequences have been found
-                if len(sequences) == len(sequences_acc):
+                if (not ret_length) and (len(sequences) == len(sequences_acc)):
                     break  # Early stopping
-        # Return filled sequences dictionary
-        return sequences
+                # Case length must be returned
+                elif ret_length:
+                    length += 1
+        # Case length must be returned
+        if ret_length:
+            return sequences, length
+        # Case only sequences must be returned
+        else:
+            return sequences
 
 
 class Cluster(Dataset):

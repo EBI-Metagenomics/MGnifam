@@ -53,7 +53,7 @@ class MSA(object):
         if (i < j):
             # Update begin and end positions
             msa.beg += self.beg + np.sum(self.aln[:, :i] != self.gap, axis=1)
-            msa.end += self.end - np.sum(self.aln[:, j+1:] != self.gap, axis=1)
+            msa.end += self.end - np.sum(self.aln[:, j:] != self.gap, axis=1)
         # Return trimmed alignment
         return msa
 

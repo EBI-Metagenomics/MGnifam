@@ -1,10 +1,14 @@
 # Dependencies
 from dask.distributed import Client
+from subprocess import CalledProcessError
+from tempfile import NamedTemporaryFile
 from tqdm import tqdm
 from glob import glob
 import numpy as np
+import tempfile
 import time
 import json
+import pdb  # Useful for debugging
 import sys
 import os
 import re
@@ -191,7 +195,7 @@ class Seed(Pipeline):
         })
 
         # Retrieve fasta sequences from MGnify .fa dataset
-        fasta_sequences = self.get_fasta_sequences(
+        fasta_sequences, mgnify_length = self.get_fasta_sequences(
             sequences_acc=sequences_acc,
             verbose=verbose
         )
@@ -211,7 +215,12 @@ class Seed(Pipeline):
         })
 
         # Plot compositional bias
-        self.plot_comp_bias(out_path=os.path.join(cluster_dir, 'comp_bias.png'))
+        self.plot_comp_bias(
+            # Compositional bias values
+            comp_bias=[*comp_bias.values()],
+            # Where to store plot
+            out_path=os.path.join(cluster_dir, 'comp_bias.png')
+        )
 
         # TODO Remove clusters with compositional bias too high
 
@@ -239,7 +248,14 @@ class Seed(Pipeline):
             verbose=verbose
         )
 
-        # TODO Search HMM against MGnify
+        # Search HMM against MGnify
+        self.search_hmms(
+            cluster_members=cluster_members,
+            cluster_dir=cluster_dir,
+            ds_size=mgnify_length,
+            target_ds=self.ds_mgnify,
+            verbose=verbose
+        )
 
         # Update timers
         time_end = time.time()
@@ -308,15 +324,15 @@ class Seed(Pipeline):
 
     # Retrieve cluster sequences for given sequences accession numbers
     def get_fasta_sequences(self, sequences_acc, verbose=False):
-        # Initialize output dict(sequence acc: fasta entry)
-        fasta_sequences = dict()
+        # Initialize output dict(sequence acc: fasta entry) and total number of searched sequences
+        fasta_sequences, fasta_length = dict(), 0
         # Initialize timers
         time_beg, time_end = time.time(), None
 
         # Submit jobs for searching cluster members sequences
         futures = self.dask_client.map(
             # Search for cluster members in current chunk
-            lambda ds: ds.search(sequences_acc),
+            lambda ds: ds.search(sequences_acc, ret_length=True),
             # List of cluster datasets
             self.ds_mgnify
         )
@@ -324,23 +340,28 @@ class Seed(Pipeline):
         results = self.dask_client.gather(futures)
         # Loop through resulting sequences dictionaries
         for i in range(len(results)):
+            # Get retrieved sequences dict and dataset length
+            ret_sequences, ret_length = results[i]
             # Loop through retrieved sequence accession numbers
-            for acc in results[i]:
+            for acc in ret_sequences:
                 # Update cluster sequences dictionary
-                fasta_sequences[acc] = results[i][acc]
+                fasta_sequences[acc] = ret_sequences[acc]
+            # Update total number of searched sequences
+            fasta_length += ret_length
 
         # Update timers
         time_end = time.time()
         # Verbose log
         if verbose:
             # Log time taken for fasta sequences distributed search
-            print('Took {:.0f} seconds to search for {:d} sequences'.format(
+            print('Took {:.0f} seconds to search for {:d} sequences in {:d} sequences'.format(
                 time_end - time_beg,  # Time required to distributed search
-                len(fasta_sequences)  # Number of sequences
+                len(fasta_sequences),  # Number of retrieved sequences
+                fasta_length  # Total number of fasta sequences searched
             ))
 
         # Return fasta sequences
-        return fasta_sequences
+        return fasta_sequences, fasta_length
 
     # Check that all the sequences have been retrieved
     def check_cluster_sequences(self, cluster_members, fasta_sequences):
@@ -458,7 +479,7 @@ class Seed(Pipeline):
         ax.set_title('Compositional Bias distribution')
         ax.set_xlabel('Compositional Bias')
         ax.set_ylabel('Number of clusters')
-        ax.hist(comp_bias.values(), density=False, bins=100)
+        ax.hist(comp_bias, density=False, bins=100)
         ax.set_xlim(left=0.0, right=1.0)
         # Save plot
         plt.savefig(out_path)
@@ -574,30 +595,37 @@ class Seed(Pipeline):
     @staticmethod
     def search_hmms_(hmm_search, hmm_path, target_ds):
 
-        # Initialize a temporary output file
-        out_file = tempfile.NamedTemporaryFile(delete=False)
+        # Initialize a temporary input and output files
+        in_temp = tempfile.NamedTemporaryFile(suffix='.fa',  delete=False)
+        out_temp = tempfile.NamedTemporaryFile(delete=False)
+
+        # Uncompress input file (if compressed)
+        ds.gunzip(in_path=target_ds.path, out_path=in_temp.name)
 
         # Search given hmm aganist given dataset using hmmsearch
         hmm_search.run(
             # Path to searched HMM file
             hmm_path=hmm_path,
             # Path to sequences target dataset
-            ds_path=target_ds.path,
+            ds_path=in_temp.name,
             # Path to per-domain output table
-            domtblout_path=out_file.name
+            domtblout_path=out_temp.name
         )
+
+        # Remove temporary input file
+        os.remove(in_temp.name)
 
         # Initialize domtblout
         domtblout = list()
         # Open output temporary file
-        with open(out_file.name) as of:
+        with open(out_temp.name) as out_file:
             # Save domtblout as list of rows
-            for row in hmm_search.iter_domtblout(of):
+            for row in hmm_search.iter_domtblout(out_file):
                 # Store current row
                 domtblout.append(row)
 
         # Remove temporary output file
-        os.remove(out_file.name)
+        os.remove(out_temp.name)
 
         # Return per-domain table
         return domtblout
@@ -621,40 +649,75 @@ class Seed(Pipeline):
                                     all matches between HMMs and sequences
         """
 
-        # Initialize a single HMM temporary file containing all built HMMs
-        hmm_temp = tempfile.NamedTemporaryFile(delete=False)
+        # # Initialize a single HMM temporary file containing all built HMMs
+        # hmm_temp = NamedTemporaryFile(suffix='.HMM', delete=False)
+        # # Open write buffer to full HMM file (append)
+        # hmm_file = open(hmm_temp.name, 'w')
+        # Path to hmm file
+        hmm_path = os.path.join(cluster_dir, 'HMM')
         # Open write buffer to full HMM file (append)
-        hmm_file = open(hmm_temp.name, 'a')
-
+        hmm_file = open(hmm_path, 'w')
         # Loop through each cluster names
         for cluster_name in cluster_members:
-
             # Define full path to current HMM file
-            curr_path = os.path.join(custer_dir, cluster_name, 'HMM')
+            curr_path = os.path.join(cluster_dir, cluster_name, 'HMM')
             # Retrieve current hmm file
-            with open(curr_path, r) as curr_file:
+            with open(curr_path, 'r') as curr_file:
                 # Loop thriugh every line of current HMM file
                 for line in curr_file:
                     # Append line to full hmm file
                     hmm_file.write(line)
+                # Add a newline at the end of each file
+                hmm_file.write('\n')
         # Close write buffer to full HMM file
         hmm_file.close()
 
-        # Initialize futures container
-        futures = list()
-        # Loop through each dataset in <against_ds> list
-        for i in range(len(target_ds)):
-            # Distribute HMM search against target dataset
-            self.dask_client.submit(
-                # Function to submit
-                self.search_hmms_,
-                # Function parameters
-                hmm_search=self.hmm_search,
-                hmm_path=hmm_file.name,
-                target_ds=target_ds[i]
-            )
-        # Retrieve results
-        results = self.dask_client.gather(futures)
+        # Debug
+        print(hmm_path)
+        # Open temporary hmm file in reading mode
+        with open(hmm_path) as hmm_file:
+            # Loop through each row in hmm file
+            for line in hmm_file:
+                # Print current line
+                print(line)
+
+        # Try running HMM search commands
+        try:
+            # Initialize futures container
+            futures = list()
+            # Loop through each dataset in <against_ds> list
+            for i in range(len(target_ds)):
+                # Distribute HMM search against target dataset
+                futures.append(self.dask_client.submit(
+                    # Function to submit
+                    self.search_hmms_,
+                    # Function parameters
+                    hmm_search=self.hmm_search,
+                    hmm_path=hmm_path,
+                    target_ds=target_ds[i]
+                ))
+
+            # Retrieve results
+            results = self.dask_client.gather(futures)
+
+        # Subprocess error
+        except CalledProcessError as err:
+            # Debug
+            print('hmmsearch exited with code', err.returncode, file=sys.stderr)
+            print('cmd:', err.cmd, file=sys.stderr)
+            print('stderr:', file=sys.stderr)
+            print(err.stderr, file=sys.stderr)
+
+        # Client error
+        except Exception as err:
+            pdb.set_trace()
+            print('error:', err)
+
+        # After exception
+        finally:
+            # Exit with error
+            sys.exit(1)
+
         # Concatenate all results in a single table
         domtblout = [
             # Get j-th domtblout row of i-th dataset chunk
@@ -669,6 +732,10 @@ class Seed(Pipeline):
 
         # Delete temporary file
         os.remove(hmm_temp.name)
+
+        # Debug
+        print('Results')
+        print(results)
 
     # Wrapper for searching given HMMs against Mgnify dataset
     def search_hmms_mgnify(self, *args, **kwargs):
