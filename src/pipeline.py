@@ -5,6 +5,7 @@ from tempfile import NamedTemporaryFile
 from tqdm import tqdm
 from glob import glob
 import numpy as np
+import traceback
 import tempfile
 import time
 import json
@@ -20,6 +21,8 @@ import matplotlib.pyplot as plt
 matplotlib.use('Agg')
 
 # Custom dependencies
+from src.utils import open_file, gunzip
+from src.hmm import iter_domtblout
 import src.dataset as ds
 import src.disorder as disorder
 import src.msa as msa
@@ -593,39 +596,37 @@ class Seed(Pipeline):
             ))
 
     @staticmethod
-    def search_hmms_(hmm_search, hmm_path, target_ds):
+    def search_hmms_(hmm_search, hmm_path, target_path):
 
         # Initialize a temporary input and output files
-        in_temp = tempfile.NamedTemporaryFile(suffix='.fa',  delete=False)
-        out_temp = tempfile.NamedTemporaryFile(delete=False)
+        in_path = NamedTemporaryFile(suffix='.fasta', delete=False).name
+        out_path = NamedTemporaryFile(delete=False).name
 
         # Uncompress input file (if compressed)
-        ds.gunzip(in_path=target_ds.path, out_path=in_temp.name)
+        gunzip(in_path=target_path, out_path=in_path)
 
         # Search given hmm aganist given dataset using hmmsearch
         hmm_search.run(
-            # Path to searched HMM file
+            # Path to searched HMM model/library file
             hmm_path=hmm_path,
             # Path to sequences target dataset
-            ds_path=in_temp.name,
+            ds_path=in_path,
             # Path to per-domain output table
-            domtblout_path=out_temp.name
+            domtblout_path=out_path
         )
-
-        # Remove temporary input file
-        os.remove(in_temp.name)
 
         # Initialize domtblout
         domtblout = list()
         # Open output temporary file
         with open(out_temp.name) as out_file:
             # Save domtblout as list of rows
-            for row in hmm_search.iter_domtblout(out_file):
+            for row in iter_domtblout(out_file):
                 # Store current row
                 domtblout.append(row)
 
-        # Remove temporary output file
-        os.remove(out_temp.name)
+        # Remove temporary input and output files
+        os.remove(in_path)
+        os.remove(out_path)
 
         # Return per-domain table
         return domtblout
@@ -649,11 +650,7 @@ class Seed(Pipeline):
                                     all matches between HMMs and sequences
         """
 
-        # # Initialize a single HMM temporary file containing all built HMMs
-        # hmm_temp = NamedTemporaryFile(suffix='.HMM', delete=False)
-        # # Open write buffer to full HMM file (append)
-        # hmm_file = open(hmm_temp.name, 'w')
-        # Path to hmm file
+        # Define path to HMM library
         hmm_path = os.path.join(cluster_dir, 'HMM')
         # Open write buffer to full HMM file (append)
         hmm_file = open(hmm_path, 'w')
@@ -667,22 +664,14 @@ class Seed(Pipeline):
                 for line in curr_file:
                     # Append line to full hmm file
                     hmm_file.write(line)
-                # Add a newline at the end of each file
-                hmm_file.write('\n')
+                # # Add a newline at the end of each file
+                # hmm_file.write('\n')
         # Close write buffer to full HMM file
         hmm_file.close()
 
-        # Debug
-        print(hmm_path)
-        # Open temporary hmm file in reading mode
-        with open(hmm_path) as hmm_file:
-            # Loop through each row in hmm file
-            for line in hmm_file:
-                # Print current line
-                print(line)
-
         # Try running HMM search commands
         try:
+
             # Initialize futures container
             futures = list()
             # Loop through each dataset in <against_ds> list
@@ -692,9 +681,9 @@ class Seed(Pipeline):
                     # Function to submit
                     self.search_hmms_,
                     # Function parameters
-                    hmm_search=self.hmm_search,
-                    hmm_path=hmm_path,
-                    target_ds=target_ds[i]
+                    hmm_search=self.hmm_search,  # HMMSearch object
+                    hmm_path=hmm_path,  # Target HMM library
+                    target_ds=target_ds[i].path  # Target dataset path
                 ))
 
             # Retrieve results
@@ -710,8 +699,8 @@ class Seed(Pipeline):
 
         # Client error
         except Exception as err:
-            pdb.set_trace()
-            print('error:', err)
+            # Debug
+            traceback.print_exc()
 
         # After exception
         finally:
@@ -731,7 +720,7 @@ class Seed(Pipeline):
         del results
 
         # Delete temporary file
-        os.remove(hmm_temp.name)
+        os.remove(hmm_path)
 
         # Debug
         print('Results')

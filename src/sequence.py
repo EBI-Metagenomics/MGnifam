@@ -2,7 +2,8 @@
 
 # Dependencies
 from tqdm import tqdm
-import tempfile
+from tempfile import NamedTemporaryFile
+import sys
 import os
 import re
 
@@ -10,14 +11,17 @@ import re
 class Fasta(object):
 
     @staticmethod
-    def read(in_file):
-        """Make ieterator over fasta entries
+    def iter(iterable):
+        """Generate fasta sequences iterator
 
         Args
-        in_file (file)  Input fasta file object
+        iterable (object)   Iterable object returning a fasta file row when a
+                            query is made
 
         Return
-        (iterator)  Allows to iterate over each entry in given fasta file
+        (generator)         Iterates through each fasta sequence, returning the
+                            sequence header and sequence residues separated by a
+                            newline character
         """
         # Initialize header and residues (both strings)
         header, residues = '', ''
@@ -50,7 +54,7 @@ class Fasta(object):
 if __name__ == '__main__':
 
     # Initialize new temporary file
-    fasta_file = tempfile.NamedTemporaryFile(delete=False)
+    fasta_file = NamedTemporaryFile(delete=False)
     # Fill sample file
     with open(fasta_file.name, 'w') as ff:
         ff.write('\n'.join([

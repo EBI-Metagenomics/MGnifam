@@ -8,53 +8,54 @@ import os
 import re
 
 # Custom dependencies
+from src.utils import is_gzip, open_file, gunzip
 from src.sequence import Fasta
 
 
-# Check if file is compressed by suffix
-def is_gzip(in_path):
-    # Return true if file name ends with .gz
-    return bool(re.search(r'\.gz$', in_path))
-
-
-# Open file even if it is gzipped
-def open_file(in_path, mode='r', gzip_mode='rt'):
-    """Open an eventually compressed file
-
-    Args
-    in_path (str)       Path to file which must be opened
-    mode (str)          Mode used to open given file path if not compressed
-    gzip_mode (str)     Mode used to open given fil if it is compressed
-
-    Return
-    (file)              Buffer to opened file with given mode
-    """
-    # Case file is gzipped
-    if is_gzip(in_path):
-        # Return uncompressed file buffer
-        return gzip.open(in_path, gzip_mode)
-    # Otherwise, return common file buffer
-    return open(in_path, mode)
-
-
-# Uncompress file
-def gunzip(in_path, out_path=None, out_suffix=''):
-    # Open file in read mode
-    in_file = open_file(in_path, 'r', 'rt')
-    # Case no output path is set
-    if not out_path:
-        # Define a new temporary file
-        temp_file = NamedTemporaryFile(suffix=out_suffix, delete=False)
-        # Set output path as temporary file path
-        out_path = temp_file.name
-    # Open output path in write mode
-    with open(out_path, 'w') as out_file:
-        # Loop through every input file path
-        for in_line in in_file:
-            # Write input line to output file
-            out_file.write(in_line)
-    # Return path to output file
-    return out_path
+# # Check if file is compressed by suffix
+# def is_gzip(in_path):
+#     # Return true if file name ends with .gz
+#     return bool(re.search(r'\.gz$', in_path))
+#
+#
+# # Open file even if it is gzipped
+# def open_file(in_path, mode='r', gzip_mode='rt'):
+#     """Open an eventually compressed file
+#
+#     Args
+#     in_path (str)       Path to file which must be opened
+#     mode (str)          Mode used to open given file path if not compressed
+#     gzip_mode (str)     Mode used to open given fil if it is compressed
+#
+#     Return
+#     (file)              Buffer to opened file with given mode
+#     """
+#     # Case file is gzipped
+#     if is_gzip(in_path):
+#         # Return uncompressed file buffer
+#         return gzip.open(in_path, gzip_mode)
+#     # Otherwise, return common file buffer
+#     return open(in_path, mode)
+#
+#
+# # Uncompress file
+# def gunzip(in_path, out_path=None, out_suffix=''):
+#     # Open file in read mode
+#     in_file = open_file(in_path, 'r', 'rt')
+#     # Case no output path is set
+#     if not out_path:
+#         # Define a new temporary file
+#         temp_file = NamedTemporaryFile(suffix=out_suffix, delete=False)
+#         # Set output path as temporary file path
+#         out_path = temp_file.name
+#     # Open output path in write mode
+#     with open(out_path, 'w') as out_file:
+#         # Loop through every input file path
+#         for in_line in in_file:
+#             # Write input line to output file
+#             out_file.write(in_line)
+#     # Return path to output file
+#     return out_path
 
 
 class Dataset(object):
@@ -64,8 +65,13 @@ class Dataset(object):
         # Store path to dataset
         self.path = path
 
-    # Get dataset length (number of entries)
+    # Just a wrapper for get length
     def __len__(self):
+        # Call get length method
+        return self.get_length()
+
+    # Retrieve dataset length
+    def get_length(self):
         raise NotImplementedError
 
     # (Abstract) Writes a dataset partition to file
@@ -85,16 +91,6 @@ class Dataset(object):
         return cls.from_list(glob.glob(path))
 
     @staticmethod
-    def is_gzip(path):
-        # Return true if file name ends with .gz
-        return bool(re.search(r'\.gz$', path))
-
-    @staticmethod
-    def open_file(path):
-        # Case file is compressed
-        return gzip.open(path, 'rt') if Dataset.is_gzip(path) else open(path, 'r')
-
-    @staticmethod
     def write_chunk(path, index, content, sep=''):
         # Define output path
         chunk_path = path.format(index)
@@ -104,22 +100,39 @@ class Dataset(object):
             chunk_file.write(sep.join(content))
 
 
-class MGnify(Dataset):
+class Fasta(Dataset):
 
     # Get length (number of fasta sequences)
-    def __len__(self):
+    def get_length(self):
         # Initialize output length
         length = 0
         # Open underlying file
-        with self.open_file(self.path) as fasta_file:
-            # Define fasta entries iterator
-            fasta_iter = Fasta.read(fasta_file)
+        with open_file(self.path) as file:
             # Loop through each entry in input fasta file
-            for entry in fasta_iter:
+            for entry in Fasta.iter(file):
                 # Update dataset length
                 length += 1
         # Return dataset length
         return length
+
+    # Get longest sequence
+    def get_longest(self):
+        # Initialize current longest entry and its length (number of residues)
+        long_seq, long_len = '', 0
+        # Open inner dataset file path
+        with open_file(self.pah) as file:
+            # Loop through each file entry
+            for entry in Fasta.iter(file):
+                # Split current entry in header and residues
+                header, residues = tuple(entry.split('\n'))
+                # Get current sequence and its number of residues
+                curr_seq, curr_len = entry, len(residues)
+                # Case current sequence is longer than longest
+                if curr_len > long_len:
+                    # Update longest sequence and its length
+                    long_seq, long_len = curr_seq, curr_len
+        # Return either longest sequence and its length
+        return long_seq, long_len
 
     # Chunking function
     def to_chunks(self, chunk_path='chunk{:03d}.tsv.gz', chunk_size=1e07):
@@ -134,6 +147,9 @@ class MGnify(Dataset):
                             e.g. `chunk{:d}.fa.gz` (must be formattable)
         chunk_size (int)    Maximum number of fasta entries to be stored in
                             each chunk
+
+        Raise
+        (FileNotFoundError) If given chunk path is not valid
         """
         # Get output directory
         chunks_dir = os.path.dirname(chunk_path)
@@ -146,9 +162,9 @@ class MGnify(Dataset):
         # Initialize sequence index
         seq_index = 0
         # Open file for reading
-        with self.open_file(self.path) as file:
+        with open_file(self.path) as file:
             # Loop through every index, line in input file
-            for entry in Fasta.read(file):
+            for entry in Fasta.iter(file):
                 # Save current line
                 seq_batch.append(entry)
                 # Case index reached batch size
@@ -194,10 +210,10 @@ class MGnify(Dataset):
         if verbose:
             print('Reading sequences file', self.path)
         # Open file with defined file handler
-        with self.open_file(self.path) as fasta_file:
+        with open_file(self.path) as file:
             # Define fasta entries iterator
             fasta_iterator = tqdm(
-                Fasta.read(fasta_file),  # Input iterator
+                Fasta.iter(file),  # Input iterator
                 disable=(not verbose),  # Set verbose
                 file=sys.stdout  # Force printing to stdout
             )
@@ -237,6 +253,9 @@ class Cluster(Dataset):
         chunk_path (str)    String containing the path of a generic chunk file,
                             e.g. `chunk{:d}.tsv.gz` (must be formattable)
         chunk_size (int)    Maximum number of lines to be stored in each chunk
+
+        Raise
+        (FileNotFoundError) If given chunk path is not valid
         """
         # Get output directory
         chunks_dir = os.path.dirname(chunk_path)
@@ -296,7 +315,7 @@ class Cluster(Dataset):
         if verbose:
             print('Reading clusters file', self.path)
         # Open dataset file
-        with self.open_file(self.path) as file:
+        with open_file(self.path) as file:
             # Define iterator
             line_iterator = tqdm(
                 file,  # File line iterator
