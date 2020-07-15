@@ -132,7 +132,8 @@ dmypy.json
 data/*
 # Exclude temporary folder
 tmp/*
-!tmp/MGYP001224746368
-!tmp/MGYP001203360481
+!tmp/examples
+# !tmp/MGYP001224746368
+# !tmp/MGYP001203360481
 # Exclude dask folder
 dask*/*

@@ -1,0 +1,10 @@
+ID   ShortName
+DE   Protein of unknown function (MGDUF)
+AU   Who RU
+SE   MGYP001230513421 (release 2019_05_uniprot)
+GA   27.00 27.00;
+TC   27.00 27.00;
+NC   27.00 27.00;
+BM   hmmbuild  -o /dev/null HMM SEED
+SM   hmmsearch -Z 172047297 -E 1000 --cpu 4 HMM uniprot
+TP   Family

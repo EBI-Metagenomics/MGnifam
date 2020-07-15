@@ -9,10 +9,12 @@ HMM against a given dataset (e.g. UniProt).
 # Dependecies
 from subprocess import CalledProcessError
 from tempfile import NamedTemporaryFile
+from itertools import product
 from tqdm import tqdm
 import numpy as np
 import subprocess
 import traceback
+import glob
 import time
 import math
 import json
@@ -73,6 +75,31 @@ class HMM(object):
         # Return new HMM instance with retrieved params
         return cls(**params)
 
+    @classmethod
+    def concat(cls, in_paths, out_path):
+        """Create HMM library
+        Create an HMM library by concatenating multiple HMM files
+
+        Args
+        in_paths (list)     List of HMM files/libraries to concatenate
+        out_path (str)      Path to resulting HMM library file
+
+        Raise
+        (FileNotFoundError) Error when trying to open one input file or when
+                            creating the output file
+        """
+        # Open output file
+        with open(out_path, 'w') as out_file:
+            # Loop through each input path
+            for in_path in in_paths:
+                # Open input path
+                in_file = open(in_path, 'r')
+                # Loop through every line in input file
+                for line in in_file:
+                    # Write out line in output file
+                    out_file.write(line)
+                # Close input file
+                in_file.close()
 
 class HMMER(object):
 
@@ -214,7 +241,7 @@ class HMMSearch(HMMER):
         )
 
     @staticmethod
-    def get_resources(max_mem, model_len, max_cpus, long_seq=4e04, num_bytes=48):
+    def get_resources(max_mem, model_len, max_cpus=1, long_seq=4e04, num_bytes=48):
         """Computes the resources needed to run hmmscan
 
         Number of cpus is the maximum number of cpus satisfying the following:
@@ -369,9 +396,9 @@ if __name__ == '__main__':
     # Define path to temporary folder
     TMP_PATH = os.path.join(ROOT_PATH, 'tmp')
     # Path to test seed file
-    SEED_PATH = os.path.join(TMP_PATH, 'MGYP001224746368', 'SEED')
+    SEED_PATH = os.path.join(TMP_PATH, 'MGYP*', 'SEED')
     # Path to test HMM
-    HMM_PATH = os.path.join(TMP_PATH, 'test.hmm')
+    HMM_PATH = os.path.join(TMP_PATH, 'MGYP*', 'HMM')
     # Path to an uncompressed MGnify chunk
     MGNIFY_PATH = os.path.join(ROOT_PATH, 'data', 'mgnify', 'chunk{:03d}.fa.gz')
 
@@ -406,107 +433,204 @@ if __name__ == '__main__':
         # Return rows in domtblout
         return matches, took
 
-    # Grab an example MSA
-    msa = MSA().from_aln(SEED_PATH)
-    # Debug
-    print('Input MSA has shape: {}'.format(msa.aln.shape))
-
-    # Define a new instance of hmm build script
+    # Define a new instance of hmmbuild script
     hmm_build = HMMBuild()
+    # Define first seed alignment in list
+    seed_path = next(glob.iglob(SEED_PATH))
+    # Define a temporary file for HMM
+    hmm_path = NamedTemporaryFile(delete=False).name
     # Log build start
     print('Building HMM from SEED alignment...')
     # Run HMM build
     hmm_build.run(
-        msa_path=SEED_PATH,
-        out_path=HMM_PATH,
+        msa_path=seed_path,
+        out_path=hmm_path,
         name='test'
     )
 
     # Load HMM result from file
-    hmm_object = HMM.from_file(HMM_PATH)
+    hmm_object = HMM.from_file(hmm_path)
+    # Remove temporary hmm file
+    os.remove(hmm_path)
     # Debug
     print('Loaded HMM object:')
-    print('  Name:', hmm_object.name)
-    print('  Length:', hmm_object.length)
-    print('  Alphabet:', hmm_object.alphabet)
-
-    # Compute required number of CPUs and memory to run hmmsearch
-    req_cpus, req_memory = HMMSearch.get_resources(
-        max_mem=8,  # Maximum number of Gb available
-        model_len=hmm_object.length,  # Length of HMM
-        max_cpus=4,  # Maximum number of CPUs available
-        long_seq=4e04,  # Maximum target sequence length
-        num_bytes=48  # Number of bytes in DP
-    )
-    print('Estimated amount of memory required by hmmsearch', end=' ')
-    print('is of {:d} Gb over {:d} processes'.format(req_memory, req_cpus))
-
-    # Define a new instance of hmm search script
-    hmm_search = HMMSearch()
-    # Test hmmsearch on first chunk of dataset
-    results, took = run_hmm_search(hmm_search, hmm_path=HMM_PATH, chunk_idx=0)
-    # Debug
-    print('Retrieved {:d} matches in {:.0f} seconds'.format(
-        len(results), took
-    ))
+    print('  name:', hmm_object.name)
+    print('  length:', hmm_object.length)
+    print('  alphabet:', hmm_object.alphabet)
+    print()
 
     # Benchmarking: multiprocessing through Dask
     # Make new cluster
-    cluster = LSFCluster(cores=1, ncpus=1, memory='16 GB', walltime='2:00', use_stdin=True)
-    # Adapt cluster resources
-    cluster.adapt(minimum=1, maximum=100)
+    cluster = LSFCluster(cores=1, memory='8 GB', walltime='2:00', use_stdin=True)
+    # Require cluster resources
+    cluster.scale(10)
     # Instantiate new client
     client = Client(cluster)
 
-    # Debug
-    print('Cluster:', cluster)
-    print('Client:', client)
+    # Define a new instance of hmm search script
+    hmm_search = HMMSearch()
 
-    # Try executing parallel HMMs
-    try:
-        # Loop through number of cpus
-        for j in range(0, 1):
-            # Initialize timers
-            time_beg, time_end = time.time(), None
+    # Initialize list of hmm objects
+    hmm_lib = list()
+    # Loop trhough each available HMM file
+    for hmm_path in glob.iglob(HMM_PATH):
 
-            # Initialize futures
-            futures = list()
-            # Loop through 10 dataset chunks
-            for i in range(0, 100):
-                # Submit function
-                future = client.submit(
-                    run_hmm_search,  # Run hmmsearch against i-th dataset chunk
-                    hmm_search=hmm_search,  # Instance of HMMSearch object
-                    hmm_path=HMM_PATH,  # Define path to HMM
-                    chunk_idx=i,  # Define i-th dataset chunk
-                    # cpu=j  # Define number of cores
-                )
-                # Save future
-                futures.append(future)
+        # Load HMM model from file
+        hmm_obj = HMM.from_file(hmm_path)
+        # Retrieve current HMM model attributes
+        hmm_name = hmm_obj.name
+        hmm_len = hmm_obj.length
 
-            # Get results
-            results = client.gather(futures)
-            # Define time took to run
-            took = [results[i][1] for i in range(len(results))]
-            # Define domtblout
-            domtblout = [
-                results[i][0][j]
-                for i in range(len(results))
-                for j in range(len(results[i][0]))
-            ]
+        # Verbose
+        print('Loaded HMM model at {:s}...'.format(hmm_path))
+        print('name: {:s}'.format(hmm_name))
+        print('length: {:d}'.format(hmm_len))
 
-            # Update timer
-            time_end = time.time()
-            # Debug
-            print('Retrieved {:d} matches'.format(len(domtblout)), end=' ', flush=False)
-            print('in {:.0f} seconds'.format(time_end - time_beg), end=' ', flush=False)
-            print('(mean time is {:.0f} seconds/dataset)'.format(np.mean(took)), end=' ', flush=False)
-            print('with {:d} CPUs'.format(j), flush=False)
+        # Define wethe the
+        fit = HMMSearch.get_resources(max_mem=8, model_len=hmm_len)
 
-    # Intercept subprocess error
-    except CalledProcessError as err:
-        # Show error
-        print('Subprocess exited with code', err.returncode)
-        print('after executing', err.cmd)
-        # Print traceback
-        traceback.print_exc()
+        # Case it does not fit memory
+        if not fit:
+            # Verbose
+            print('hmmsearch requires more resources than available:', end=' ')
+            print('model {:s} has been discarded')
+            print()
+            # Skip iteration
+            continue
+
+        # Verbose
+        print('hmmsearch fits available resources:', end=' ')
+        print('model {:s} added to library')
+        print()
+
+        # Add current model to library
+        hmm_lib.append(hmm_path)
+
+    # Define number of HMM models to test together: one, half, all
+    num_hmm = [1, len(hmm_lib)//2, len(hmm_lib)]
+    # Define number of chunks to be tested together
+    num_chunks = [1, 10, 100]
+    # Define all possible parameters combinations
+    params = product(num_hmm, num_chunks)
+    # Looping through each parameter combination
+    for max_hmm, max_chunks in params:
+
+        # Initialize timers
+        time_beg, time_end = time.time(), None
+
+        # Initialize current HMM library empty file
+        hmm_lib_path = NamedTemporaryFile(delete=False).name
+        # Fill current HMM library file
+        HMM.concat(in_paths=hmm_lib[:max_hmm], out_path=hmm_lib_path)
+
+        # Verbose
+        print('Searching {:d} HMM models against {:d} dataset chunks...'.format(
+            max_hmm, max_chunks
+        ), end='', flush=False)
+
+        # Initialize futures
+        futures = list()
+        # Loop through given dataset chunks
+        for i in range(0, max_chunks):
+            # Submit function
+            future = client.submit(
+                run_hmm_search,  # Run hmmsearch against i-th dataset chunk
+                hmm_search=hmm_search,  # Instance of HMMSearch object
+                hmm_path=hmm_lib_path,  # Define path to HMM
+                chunk_idx=i  # Define i-th dataset chunk
+            )
+            # Save future
+            futures.append(future)
+
+        # Get results
+        results = client.gather(futures)
+        # Define time took to run
+        took = [results[i][1] for i in range(len(results))]
+        # Define domtblout
+        domtblout = [
+            results[i][0][j]
+            for i in range(len(results))
+            for j in range(len(results[i][0]))
+        ]
+
+        # Update timer
+        time_end = time.time()
+        # Verbose
+        print('DONE')
+        print('Retrieved {:d} matches'.format(len(domtblout)), end=' ', flush=False)
+        print('in {:.0f} seconds'.format(time_end - time_beg), end=' ', flush=False)
+        print('({:.0f} seconds/dataset)'.format(np.mean(took)), end=' ', flush=False)
+        print()
+
+    # print('Estimated amount of memory required by hmmsearch', end=' ')
+    # print('is of {:d} Gb over {:d} processes'.format(req_memory, req_cpus))
+    #
+    # # Define a new instance of hmm search script
+    # hmm_search = HMMSearch()
+    # # Test hmmsearch on first chunk of dataset
+    # results, took = run_hmm_search(hmm_search, hmm_path=HMM_PATH, chunk_idx=0)
+    # # Debug
+    # print('Retrieved {:d} matches in {:.0f} seconds'.format(
+    #     len(results), took
+    # ))
+    #
+    # # Benchmarking: multiprocessing through Dask
+    # # Make new cluster
+    # cluster = LSFCluster(cores=1, ncpus=1, memory='16 GB', walltime='2:00', use_stdin=True)
+    # # Adapt cluster resources
+    # cluster.adapt(minimum=1, maximum=100)
+    # # Instantiate new client
+    # client = Client(cluster)
+    #
+    # # Debug
+    # print('Cluster:', cluster)
+    # print('Client:', client)
+    #
+    # # Try executing parallel HMMs
+    # try:
+    #     # Loop through number of cpus
+    #     for j in range(0, 1):
+    #         # Initialize timers
+    #         time_beg, time_end = time.time(), None
+    #
+    #         # Initialize futures
+    #         futures = list()
+    #         # Loop through 10 dataset chunks
+    #         for i in range(0, 100):
+    #             # Submit function
+    #             future = client.submit(
+    #                 run_hmm_search,  # Run hmmsearch against i-th dataset chunk
+    #                 hmm_search=hmm_search,  # Instance of HMMSearch object
+    #                 hmm_path=HMM_PATH,  # Define path to HMM
+    #                 chunk_idx=i,  # Define i-th dataset chunk
+    #                 # cpu=j  # Define number of cores
+    #             )
+    #             # Save future
+    #             futures.append(future)
+    #
+    #         # Get results
+    #         results = client.gather(futures)
+    #         # Define time took to run
+    #         took = [results[i][1] for i in range(len(results))]
+    #         # Define domtblout
+    #         domtblout = [
+    #             results[i][0][j]
+    #             for i in range(len(results))
+    #             for j in range(len(results[i][0]))
+    #         ]
+    #
+    #         # Update timer
+    #         time_end = time.time()
+    #         # Debug
+    #         print('Retrieved {:d} matches'.format(len(domtblout)), end=' ', flush=False)
+    #         print('in {:.0f} seconds'.format(time_end - time_beg), end=' ', flush=False)
+    #         print('(mean time is {:.0f} seconds/dataset)'.format(np.mean(took)), end=' ', flush=False)
+    #         print('with {:d} CPUs'.format(j), flush=False)
+    #
+    # # Intercept subprocess error
+    # except CalledProcessError as err:
+    #     # Show error
+    #     print('Subprocess exited with code', err.returncode)
+    #     print('after executing', err.cmd)
+    #     # Print traceback
+    #     traceback.print_exc()

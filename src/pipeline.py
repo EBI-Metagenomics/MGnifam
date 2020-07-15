@@ -29,6 +29,12 @@ import src.msa as msa
 import src.hmm as hmm
 
 
+class Log(object):
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError
+
+
 class Pipeline(object):
 
     # Constructor
@@ -597,6 +603,10 @@ class Seed(Pipeline):
 
     @staticmethod
     def search_hmms_(hmm_search, hmm_path, target_path):
+        """Search an HMM file/library against a target dataset
+        Target dataset is compressed, so it gets uncompressed firstly.
+        Then, domtblout is retrieved by running hmmsearch
+        """
 
         # Initialize a temporary input and output files
         in_path = NamedTemporaryFile(suffix='.fasta', delete=False).name
@@ -634,6 +644,11 @@ class Seed(Pipeline):
     # Search Hidden Markov Models (HMMs) against a dataset
     def search_hmms(self, cluster_members, cluster_dir, target_ds, ds_size, verbose=False):
         """Search multiple HMMs against given dataset
+        First, goes through each HMM path and checks if the required resources
+        fit into allocated ones. If not, skips the cluster, otherwise adds it to
+        HMM library which will be checked against the whole target dataset.
+        Finally, HMM library is run against each chunk in the target dataset
+        in a distributed manner.
 
         Args
         cluster_members (iterable)  Contains names of clusters whose HMM must be
@@ -650,24 +665,51 @@ class Seed(Pipeline):
                                     all matches between HMMs and sequences
         """
 
-        # Define path to HMM library
-        hmm_path = os.path.join(cluster_dir, 'HMM')
-        # Open write buffer to full HMM file (append)
-        hmm_file = open(hmm_path, 'w')
+        # List of HMMs
+        hmm_lib = list()
         # Loop through each cluster names
         for cluster_name in cluster_members:
             # Define full path to current HMM file
-            curr_path = os.path.join(cluster_dir, cluster_name, 'HMM')
-            # Retrieve current hmm file
-            with open(curr_path, 'r') as curr_file:
-                # Loop thriugh every line of current HMM file
-                for line in curr_file:
-                    # Append line to full hmm file
-                    hmm_file.write(line)
-                # # Add a newline at the end of each file
-                # hmm_file.write('\n')
-        # Close write buffer to full HMM file
-        hmm_file.close()
+            hmm_path = os.path.join(cluster_dir, cluster_name, 'HMM')
+            # Load HMM from file
+            hmm_obj = HMM.from_file(hmm_path)
+            # Get HMM length
+            hmm_len = hmm_obj.length
+            # Compute required memory resources (1 CPU)
+            fit = HMMSearch.get_resources(
+                max_mem=8,  # Maximum memory in Gb
+                model_len=hmm_len,  # Model length
+                max_cpus=1  # Set maximum number of CPUs
+            )
+            # Case current HMM does not fit allocated resources
+            if not fit:
+                continue  # Skip iteration
+            # Otherwise, add HMM path to HMM library
+            hmm_lib.append(hmm_path)
+
+        # Initialize new temporary file
+        hmm_lib_path = NamedTemporaryFile(delete=False).name
+        # Build single HMM lib
+        HMM.concat(in_paths=hmm_lib_path, out_path=hmm_path)
+        #
+        # # # Define path to HMM library
+        # # hmm_path = os.path.join(cluster_dir, 'HMM')
+        # # # Open write buffer to full HMM file (append)
+        # # hmm_file = open(hmm_path, 'w')
+        # # Loop through each cluster names
+        # for cluster_name in cluster_members:
+        #     # Define full path to current HMM file
+        #     curr_path = os.path.join(cluster_dir, cluster_name, 'HMM')
+        #     # Retrieve current hmm file
+        #     with open(curr_path, 'r') as curr_file:
+        #         # Loop thriugh every line of current HMM file
+        #         for line in curr_file:
+        #             # Append line to full hmm file
+        #             hmm_file.write(line)
+        #         # # Add a newline at the end of each file
+        #         # hmm_file.write('\n')
+        # # Close write buffer to full HMM file
+        # hmm_file.close()
 
         # Try running HMM search commands
         try:
@@ -682,12 +724,15 @@ class Seed(Pipeline):
                     self.search_hmms_,
                     # Function parameters
                     hmm_search=self.hmm_search,  # HMMSearch object
-                    hmm_path=hmm_path,  # Target HMM library
+                    hmm_path=hmm_lib_path,  # Target HMM library
                     target_ds=target_ds[i].path  # Target dataset path
                 ))
 
             # Retrieve results
             results = self.dask_client.gather(futures)
+
+            # Remove input HMM library
+            os.remove(hmm_lib_path)
 
         # Subprocess error
         except CalledProcessError as err:
@@ -716,11 +761,6 @@ class Seed(Pipeline):
             # Loop through each row in i-th dataset chunk result
             for j in range(len(results[i]))
         ]
-        # Delete results (free space)
-        del results
-
-        # Delete temporary file
-        os.remove(hmm_path)
 
         # Debug
         print('Results')
