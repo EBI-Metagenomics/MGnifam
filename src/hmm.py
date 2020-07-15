@@ -472,6 +472,8 @@ if __name__ == '__main__':
 
     # Initialize list of hmm objects
     hmm_lib = list()
+    # Debug
+    print(HMM_PATH)
     # Loop trhough each available HMM file
     for hmm_path in glob.iglob(HMM_PATH):
 
