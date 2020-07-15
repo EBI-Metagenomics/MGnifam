@@ -9,7 +9,7 @@ import re
 
 # Custom dependencies
 from src.utils import is_gzip, open_file, gunzip
-from src.sequence import Fasta
+from src.sequences import Fasta
 
 
 # # Check if file is compressed by suffix

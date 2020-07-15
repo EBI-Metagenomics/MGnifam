@@ -13,7 +13,7 @@ import os
 import re
 
 # Custom dependencies
-from src.sequence import Fasta
+from src.sequences import Fasta
 
 
 class MSA(object):

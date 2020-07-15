@@ -40,18 +40,16 @@ def gunzip(in_path, out_path=None, out_suffix=''):
     in_file = open_file(in_path, 'r', 'rt')
     # Case no output path is set
     if not out_path:
-        # Define a new temporary file
-        temp_file = NamedTemporaryFile(suffix=out_suffix, delete=False)
         # Set output path as temporary file path
-        out_path = temp_file.name
+        out_path = NamedTemporaryFile(suffix=out_suffix, delete=False).name
     # Open output path in write mode
     with open(out_path, 'w') as out_file:
         # Loop through every input file path
         for in_line in in_file:
             # Write input line to output file
             out_file.write(in_line)
-    # # Set ouput file permissions
-    # os.chmod(out_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IROTH | stat.S_IWOTH)
+    # Close input file
+    in_file.close()
     # Return path to output file
     return out_path
 
