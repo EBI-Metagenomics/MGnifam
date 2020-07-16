@@ -1,11 +1,25 @@
 # Dependencies
 from tempfile import NamedTemporaryFile
+from glob import glob
 import time
 import gzip
 import stat
 import sys
 import os
 import re
+
+
+def get_paths(in_paths):
+    # Check input path type: string
+    if isinstance(in_paths, str):
+        # Use glob to find files referenced by unix string
+        return glob(in_paths)
+    # Case input path is already a list
+    elif isinstance(in_paths, list):
+        # Return given list
+        return in_paths
+    # Case input type is not valid
+    raise ValueError('Given path is not valid')
 
 
 # Check if file is compressed by suffix

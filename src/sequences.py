@@ -26,7 +26,7 @@ class Fasta(object):
         # Initialize header and residues (both strings)
         header, residues = '', ''
         # Go through each line in file
-        for line in in_file:
+        for line in iterable:
             # Check if line matches fasta header
             match_header = re.search(r'^>', line)
             # Case current line is not header
@@ -48,6 +48,11 @@ class Fasta(object):
         # Return last entry, if any
         if header and residues:
             yield header + '\n' + residues
+
+
+# Wrapper for fasta iterator
+def fasta_iter(*args, **kwargs):
+    return Fasta.iter(*args, **kwargs)
 
 
 # Unit test

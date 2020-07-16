@@ -9,7 +9,7 @@ import re
 
 # Custom dependencies
 from src.utils import is_gzip, open_file, gunzip
-from src.sequences import Fasta
+from src.sequences import fasta_iter
 
 
 # # Check if file is compressed by suffix
@@ -109,7 +109,7 @@ class Fasta(Dataset):
         # Open underlying file
         with open_file(self.path) as file:
             # Loop through each entry in input fasta file
-            for entry in Fasta.iter(file):
+            for entry in fasta_iter(file):
                 # Update dataset length
                 length += 1
         # Return dataset length
@@ -122,7 +122,7 @@ class Fasta(Dataset):
         # Open inner dataset file path
         with open_file(self.pah) as file:
             # Loop through each file entry
-            for entry in Fasta.iter(file):
+            for entry in fasta_iter(file):
                 # Split current entry in header and residues
                 header, residues = tuple(entry.split('\n'))
                 # Get current sequence and its number of residues
@@ -164,7 +164,7 @@ class Fasta(Dataset):
         # Open file for reading
         with open_file(self.path) as file:
             # Loop through every index, line in input file
-            for entry in Fasta.iter(file):
+            for entry in fasta_iter(file):
                 # Save current line
                 seq_batch.append(entry)
                 # Case index reached batch size
@@ -212,13 +212,13 @@ class Fasta(Dataset):
         # Open file with defined file handler
         with open_file(self.path) as file:
             # Define fasta entries iterator
-            fasta_iterator = tqdm(
-                Fasta.iter(file),  # Input iterator
+            tqdm_iter = tqdm(
+                fasta_iter(file),  # Input iterator
                 disable=(not verbose),  # Set verbose
                 file=sys.stdout  # Force printing to stdout
             )
             # Loop through each entry in input fasta file
-            for entry in fasta_iterator:
+            for entry in tqdm_iter:
                 # Split entry in header and residues
                 header, resiudes = entry.split('\n')
                 # Get accession number from header
@@ -241,7 +241,7 @@ class Fasta(Dataset):
             return sequences
 
 
-class Cluster(Dataset):
+class LinClust(Dataset):
 
     # Chunking function
     def to_chunks(self, chunk_path='chunk{:03d}.fa.gz', chunk_size=1e07):

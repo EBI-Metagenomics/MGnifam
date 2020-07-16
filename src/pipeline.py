@@ -29,12 +29,6 @@ import src.msa as msa
 import src.hmm as hmm
 
 
-class Log(object):
-
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError
-
-
 class Pipeline(object):
 
     # Constructor
@@ -602,11 +596,28 @@ class Seed(Pipeline):
             ))
 
     @staticmethod
-    def search_hmms_(hmm_search, hmm_path, target_path):
+    def search_hmms_(hmm_search, hmm_paths, target_path, num_cpus=1):
         """Search an HMM file/library against a target dataset
         Target dataset is compressed, so it gets uncompressed firstly.
-        Then, domtblout is retrieved by running hmmsearch
+        Then, domtblout is retrieved by running hmmsearch.
+
+        Args
+        hmm_search (HMMSearch)      Already initialized wrapper for hmmsearch
+                                    script
+        hmm_paths (list)            List of paths to HMM files to concatenate
+                                    in a sinfle HMM library
+        target_path (str)           Path to target dataset, against wich given
+                                    HMM library will be searched
+        num_cpus (int)              Number of CPUs to use in hmmsearch run
+
+        Return
+        (list)                      List containing domtblout table rows
         """
+
+        # Initialize current HMM library empty file
+        hmm_lib_path = NamedTemporaryFile(suffix='.HMM', delete=False).name
+        # Fill current HMM library file
+        HMM.concat(in_paths=hmm_paths, out_path=hmm_lib_path)
 
         # Initialize a temporary input and output files
         in_path = NamedTemporaryFile(suffix='.fasta', delete=False).name
@@ -618,11 +629,13 @@ class Seed(Pipeline):
         # Search given hmm aganist given dataset using hmmsearch
         hmm_search.run(
             # Path to searched HMM model/library file
-            hmm_path=hmm_path,
+            hmm_path=hmm_lib_path,
             # Path to sequences target dataset
             ds_path=in_path,
             # Path to per-domain output table
-            domtblout_path=out_path
+            domtblout_path=out_path,
+            # Define number of CPUs allocated
+            num_cpus=num_cpus
         )
 
         # Initialize domtblout
@@ -667,6 +680,8 @@ class Seed(Pipeline):
 
         # List of HMMs
         hmm_lib = list()
+        # Initialize maximum available resources
+        max_memory, max_cpus = 8, 8
         # Loop through each cluster names
         for cluster_name in cluster_members:
             # Define full path to current HMM file
@@ -675,82 +690,62 @@ class Seed(Pipeline):
             hmm_obj = HMM.from_file(hmm_path)
             # Get HMM length
             hmm_len = hmm_obj.length
-            # Compute required memory resources (1 CPU)
-            fit = HMMSearch.get_resources(
-                max_mem=8,  # Maximum memory in Gb
+            # Compute required memory resources
+            num_cpus = HMMSearch.get_resources(
+                max_memory=max_memory,  # Maximum memory in Gb
                 model_len=hmm_len,  # Model length
-                max_cpus=1  # Set maximum number of CPUs
+                longest_seq=4e04,  # Longest sequence
+                max_cpus=max_cpus  # Set maximum number of CPUs
             )
             # Case current HMM does not fit allocated resources
-            if not fit:
+            if not num_cpus:
                 continue  # Skip iteration
+            # Otherwise, update maximum number of CPUs
+            max_cpus = min(num_cpus, max_cpus)
             # Otherwise, add HMM path to HMM library
             hmm_lib.append(hmm_path)
 
-        # Initialize new temporary file
-        hmm_lib_path = NamedTemporaryFile(delete=False).name
-        # Build single HMM lib
-        HMM.concat(in_paths=hmm_lib_path, out_path=hmm_path)
+        # # Try running HMM search commands
+        # try:
+
+        # Initialize futures container
+        futures = list()
+        # Loop through each dataset in <against_ds> list
+        for i in range(len(target_ds)):
+            # Distribute HMM search against target dataset
+            futures.append(self.dask_client.submit(
+                # Function to submit
+                self.search_hmms_,
+                # Function parameters
+                hmm_search=self.hmm_search,  # HMMSearch object
+                hmm_path=hmm_lib_path,  # Target HMM library
+                target_ds=target_ds[i].path,  # Target dataset path
+                num_cpus=max_cpus  # Number of CPUs allocated
+            ))
+
+        # Retrieve results
+        results = self.dask_client.gather(futures)
+
+        # # Remove input HMM library
+        # os.remove(hmm_lib_path)
+
+        # # Subprocess error
+        # except CalledProcessError as err:
+        #     # Debug
+        #     print('hmmsearch exited with code', err.returncode, file=sys.stderr)
+        #     print('cmd:', err.cmd, file=sys.stderr)
+        #     print('stderr:', file=sys.stderr)
+        #     print(err.stderr, file=sys.stderr)
         #
-        # # # Define path to HMM library
-        # # hmm_path = os.path.join(cluster_dir, 'HMM')
-        # # # Open write buffer to full HMM file (append)
-        # # hmm_file = open(hmm_path, 'w')
-        # # Loop through each cluster names
-        # for cluster_name in cluster_members:
-        #     # Define full path to current HMM file
-        #     curr_path = os.path.join(cluster_dir, cluster_name, 'HMM')
-        #     # Retrieve current hmm file
-        #     with open(curr_path, 'r') as curr_file:
-        #         # Loop thriugh every line of current HMM file
-        #         for line in curr_file:
-        #             # Append line to full hmm file
-        #             hmm_file.write(line)
-        #         # # Add a newline at the end of each file
-        #         # hmm_file.write('\n')
-        # # Close write buffer to full HMM file
-        # hmm_file.close()
-
-        # Try running HMM search commands
-        try:
-
-            # Initialize futures container
-            futures = list()
-            # Loop through each dataset in <against_ds> list
-            for i in range(len(target_ds)):
-                # Distribute HMM search against target dataset
-                futures.append(self.dask_client.submit(
-                    # Function to submit
-                    self.search_hmms_,
-                    # Function parameters
-                    hmm_search=self.hmm_search,  # HMMSearch object
-                    hmm_path=hmm_lib_path,  # Target HMM library
-                    target_ds=target_ds[i].path  # Target dataset path
-                ))
-
-            # Retrieve results
-            results = self.dask_client.gather(futures)
-
-            # Remove input HMM library
-            os.remove(hmm_lib_path)
-
-        # Subprocess error
-        except CalledProcessError as err:
-            # Debug
-            print('hmmsearch exited with code', err.returncode, file=sys.stderr)
-            print('cmd:', err.cmd, file=sys.stderr)
-            print('stderr:', file=sys.stderr)
-            print(err.stderr, file=sys.stderr)
-
-        # Client error
-        except Exception as err:
-            # Debug
-            traceback.print_exc()
-
-        # After exception
-        finally:
-            # Exit with error
-            sys.exit(1)
+        # # Client error
+        # except Exception as err:
+        #     # Debug
+        #     traceback.print_exc()
+        #
+        # # After exception
+        # finally:
+        #     # Exit with error
+        #     sys.exit(1)
 
         # Concatenate all results in a single table
         domtblout = [
@@ -763,8 +758,7 @@ class Seed(Pipeline):
         ]
 
         # Debug
-        print('Results')
-        print(results)
+        print('Retrieved {:d} rows from domtblout'.format(len(results)))
 
     # Wrapper for searching given HMMs against Mgnify dataset
     def search_hmms_mgnify(self, *args, **kwargs):

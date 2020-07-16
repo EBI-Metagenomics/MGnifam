@@ -24,7 +24,7 @@ import re
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/..')
 
 # Custom dependencies
-from src.pipeline import Seed
+from src.pipeline.seed import Seed
 
 
 # Define root foldepath
@@ -40,14 +40,11 @@ if __name__ == '__main__':
     # Initialize distributed cluster
     cluster = LSFCluster(
         cores=1,  # Number of cores per job
-        # scheduler_port=39156,  # Port where scheduler will listen
         memory='4GB',  # Memory allocated per job
         walltime='04:00',  # Time before shutting down worker jobs
-        # log_directory=ROOT_PATH+'/tmp/log',  # Logs directory
         use_stdin=True  # Pass commands as stdin
     )
-    # # Initialize local cluster
-    # cluster = LocalCluster()
+    # Set number of jobs boundaries
     cluster.adapt(minimum=20, maximum=100)
     # Debug
     print('Cluster:', cluster)
@@ -60,7 +57,7 @@ if __name__ == '__main__':
 
     # Instantiate new seed alignment pipeline
     pipeline = Seed(
-        clusters_path=CLUSTERS_PATH,
+        linclust_path=CLUSTERS_PATH,
         mgnify_path=MGNIFY_PATH,
         dask_client=client
     )
@@ -79,6 +76,8 @@ if __name__ == '__main__':
     # ]
     # Initialize list of cluster names
     cluster_names = list()
+    # Set upper bound to clusters number
+    cluster_number = 1000
     # Input file path
     in_path = '/hps/nobackup2/production/metagenomics/dclementel/MGnifam_build/Batch_lists/build_list0300'
     # Open input file
@@ -92,13 +91,17 @@ if __name__ == '__main__':
                 continue  # Skip iteration
             # Otherwise, add cluster name to input list
             cluster_names.append(match.group(1))
+            # Case limit of clusters has been reached
+            if cluster_number == len(cluster_names):
+                break  # Exit cycle
 
     # Define output path
     cluster_out_dir = ROOT_PATH + '/tmp/seed'
     # Run the pipeline
     pipeline(
         cluster_names=cluster_names,
-        cluster_dir=cluster_out_dir,
-        verbose=True,
-        log=True
+        clusters_dir=cluster_out_dir,
+        comp_bias_threshold=0.2,
+        comp_bias_inclusive=True,
+        verbose=True
     )

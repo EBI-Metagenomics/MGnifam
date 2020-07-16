@@ -100,6 +100,7 @@ class HMM(object):
                 # Close input file
                 in_file.close()
 
+
 class HMMER(object):
 
     def __init__(self, cmd, env=os.environ.copy()):
@@ -240,7 +241,7 @@ class HMMSearch(HMMER):
         )
 
     @staticmethod
-    def get_resources(max_mem, model_len, max_cpus=1, long_seq=4e04, num_bytes=48):
+    def get_resources(max_memory, model_len, max_cpus=1, longest_seq=4e04, num_bytes=48):
         """Computes the resources needed to run hmmscan
 
         Number of cpus is the maximum number of cpus satisfying the following:
@@ -252,36 +253,31 @@ class HMMSearch(HMMER):
                 num_bytes is the number of bytes in the dp
 
         Args
-        max_mem (int)           Maximum number of Gb that can be allocated to
-                                run hmmscan
-        long_seq (int)          Length of the longest sequence in hmmscan target
+        max_memory (int)        Maximum number of Gb that can be allocated to
+                                run hmmscan (on a single LSF job)
+        longest_seq (int)       Length of the longest sequence in hmmscan target
                                 dataset
         model_len (int)         Length of the HMM model
         max_cpus (int)          Maximum number of available CPUs
         num_bytes (int)         Number of bytes in DP
 
         Return
-        (int)                   Number of cpus needed
-        (int)                   Number of Gb of memory needed
-
-        Raise
-        (MemoryError)           When the memory threshold is exceeded in any case
+        (int)                   Number of cpus needed (0 if allocated resources
+                                are not fitting computational ones)
         """
-        # Check if minimum number of CPUs does not exceed memory threshold
-        min_mem = math.ceil(model_len * long_seq * num_bytes * 1) / 1e09
-        # Case minimum memory exceeds memory threshold
-        if min_mem > max_mem:
-            # Raise new memory exception
-            raise MemoryError('hmmscan exceeds maximum memory threshold')
-        # Loop until required memory does not exceed maximum memory threshold
+        # Compute number of Gb required by a single core
+        req_memory = math.ceil((model_len * longest_seq * num_bytes)/1e09)
+        # Loop from maximum number of CPUS to minimum (1)
         for num_cpus in range(max_cpus, 0, -1):
-            # Compure required memory
-            req_mem = int((model_len * long_seq * num_bytes * num_cpus) / 1e09)
-            # Case required memoryexceed maximum threshold
-            if req_mem > max_mem:
-                continue # Go to next iteration
+            # Check memory allocated to a single core
+            core_memory = max_memory // num_cpus
+            # Case allocated memory does not fit required
+            if core_memory < req_memory:
+                continue  # Skip iteration
             # Otherwise, return current number of cpus
-            return num_cpus, req_mem
+            return num_cpus
+        # If flow reaches this point, no cpu can be allocated
+        return 0
 
 # domtblout iterator
 def iter_domtblout(iterable):
@@ -460,7 +456,7 @@ if __name__ == '__main__':
 
     # Benchmarking: multiprocessing through Dask
     # Make new cluster
-    cluster = LSFCluster(cores=4, processes=1, memory='32 GB', walltime='2:00', use_stdin=True)
+    cluster = LSFCluster(cores=4, processes=1, memory='16 GB', walltime='2:00', use_stdin=True)
     # Start workers
     cluster.adapt(minimum=1, maximum=10)
     # cluster.scale(10)

@@ -13,7 +13,7 @@ import os
 import re
 
 # Custom dependencies
-from src.sequences import Fasta
+from src.sequences import fasta_iter
 
 
 class MSA(object):
@@ -179,7 +179,7 @@ class MSA(object):
         # Initialize accession number, begin and end positions as lists
         acc, beg, end = list(), list(), list()
         # Loop through fasta file lines
-        for entry in Fasta.read(in_file):
+        for entry in fasta_iter(in_file):
             # Split entry in header and residues
             header, residues = tuple(entry.split('\n'))
             # Save accession number / id

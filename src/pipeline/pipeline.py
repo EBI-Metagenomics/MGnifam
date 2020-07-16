@@ -12,6 +12,17 @@ class Log(object):
         self.log_dict = log_dict
         self.log_path = log_path
 
+    # Handle attribute not found: search in log dict
+    def __getattr__(self, key):
+        # Define underlying dictionary keys
+        keys = set(self.log_dict.keys())
+        # Case key does not exist in underlying dictionary
+        if key not in keys:
+            # Raise key error
+            raise KeyError('Key not found in underlying log dictionary')
+        # Otherwise, return key
+        return self.log_dict[key]
+
     # Wrapper for update method
     def __call__(self, *args, **kwargs):
         # Call update method
@@ -31,7 +42,7 @@ class Log(object):
         # Open output file
         with open(self.log_path, 'w') as log_file:
             # Dump log dictionary to file
-            json.dump(log_dict, log_file, indent=2)
+            json.dump(self.log_dict, log_file, indent=2)
 
 
 class Pipeline(object):
