@@ -78,3 +78,29 @@ def benchmark(fn, *args, **kwargs):
     time_end = time.time()
     # Return Function results and time taken
     return results, (time_end - time_beg)
+
+
+# Turn memory string into bits
+def as_bytes(memory_str):
+    # Memory multipliers
+    multipliers = {'': 1, 'B': 1, 'KB': 1e03, 'MB': 1e06, 'GB': 1e09, 'TB': 10e12}
+    # Remove trailing spaces
+    memory_str = memory_str.strip()
+    # Check that input string matches format
+    match = re.search(r'^(\d+\.{,1}|\d+\.\d+|\.\d+)\s*(\S*)$', memory_str)
+    # # Debug
+    # print('Matches?', bool(match))
+    # Case string matches
+    if match:
+        # Otherwise, get either numeric value and multiplier
+        value = float(match.group(1))
+        size = str(match.group(2)).upper()
+        # # Debug
+        # print('Value:', value)
+        # print('Size:', size)
+        # Case size mathces a multiplier
+        if size in set(multipliers.keys()):
+            # Return float value times multiplier
+            return value * multipliers[size]
+    # Raise new error
+    raise ValueError('Wrong memory string input format')

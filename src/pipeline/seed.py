@@ -20,7 +20,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 
-class Seed(Pipeline):
+class SeedPipeline(Pipeline):
     """Seed alignment block
     This block handles all operations needed to produce a SEED alignment for
     each cluster. Then, automatically trims and filters out SEED alignments.
@@ -48,7 +48,7 @@ class Seed(Pipeline):
         # Initialize a new hmmsearch instance
         self.hmm_search = HMMSearch()
         # Set client (Client(LocalCluster) by default)
-        self.dask_client = dask_client
+        self.dask_client = self.get_client()
 
     # Run Seed alignment (for a single cluster)
     def run(
@@ -113,7 +113,7 @@ class Seed(Pipeline):
             # Resulting clusters information
             'result_clusters': {
                 'num_clusters': 0,
-                'num_sequences': 0,
+                # 'num_sequences': 0,
                 'avg_sequences': 0.0,
                 'avg_bias': 0.0
             }

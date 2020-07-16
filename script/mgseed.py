@@ -24,7 +24,7 @@ import re
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + '/..')
 
 # Custom dependencies
-from src.pipeline.seed import Seed
+from src.pipeline.seed import SeedPipeline
 
 
 # Define root foldepath
@@ -35,12 +35,13 @@ CLUSTERS_PATH = ROOT_PATH + '/data/clusters/chunk*.tsv.gz'
 MGNIFY_PATH = ROOT_PATH + '/data/mgnify/chunk*.fa.gz'
 
 
+# Main
 if __name__ == '__main__':
 
     # Initialize distributed cluster
     cluster = LSFCluster(
         cores=1,  # Number of cores per job
-        memory='4GB',  # Memory allocated per job
+        memory='8GB',  # Memory allocated per job
         walltime='04:00',  # Time before shutting down worker jobs
         use_stdin=True  # Pass commands as stdin
     )

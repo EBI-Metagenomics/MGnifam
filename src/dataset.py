@@ -12,52 +12,6 @@ from src.utils import is_gzip, open_file, gunzip
 from src.sequences import fasta_iter
 
 
-# # Check if file is compressed by suffix
-# def is_gzip(in_path):
-#     # Return true if file name ends with .gz
-#     return bool(re.search(r'\.gz$', in_path))
-#
-#
-# # Open file even if it is gzipped
-# def open_file(in_path, mode='r', gzip_mode='rt'):
-#     """Open an eventually compressed file
-#
-#     Args
-#     in_path (str)       Path to file which must be opened
-#     mode (str)          Mode used to open given file path if not compressed
-#     gzip_mode (str)     Mode used to open given fil if it is compressed
-#
-#     Return
-#     (file)              Buffer to opened file with given mode
-#     """
-#     # Case file is gzipped
-#     if is_gzip(in_path):
-#         # Return uncompressed file buffer
-#         return gzip.open(in_path, gzip_mode)
-#     # Otherwise, return common file buffer
-#     return open(in_path, mode)
-#
-#
-# # Uncompress file
-# def gunzip(in_path, out_path=None, out_suffix=''):
-#     # Open file in read mode
-#     in_file = open_file(in_path, 'r', 'rt')
-#     # Case no output path is set
-#     if not out_path:
-#         # Define a new temporary file
-#         temp_file = NamedTemporaryFile(suffix=out_suffix, delete=False)
-#         # Set output path as temporary file path
-#         out_path = temp_file.name
-#     # Open output path in write mode
-#     with open(out_path, 'w') as out_file:
-#         # Loop through every input file path
-#         for in_line in in_file:
-#             # Write input line to output file
-#             out_file.write(in_line)
-#     # Return path to output file
-#     return out_path
-
-
 class Dataset(object):
 
     # Constructor
@@ -183,6 +137,10 @@ class Fasta(Dataset):
                 chunk_index = int(seq_index // chunk_size)
                 # Persist chunk to disk
                 self.write_chunk(chunk_path, chunk_index, seq_batch, sep='\n')
+        # Define number of chunks
+        num_chunks = chunk_index + 1
+        # Return number of chunks
+        return num_chunks
 
     # Search function
     def search(self, sequences_acc, ret_length=False, verbose=False):
@@ -268,7 +226,7 @@ class LinClust(Dataset):
         # Initialize sequence index
         seq_index = 0
         # Open input file
-        with self.open_file(self.path) as file:
+        with open_file(self.path) as file:
             # Loop through every index, line in input file
             for line in file:
                 # Save current line
@@ -289,6 +247,10 @@ class LinClust(Dataset):
                 chunk_index = int(seq_index // chunk_size)
                 # Persist chunk to disk
                 self.write_chunk(chunk_path, chunk_index, seq_batch)
+        # Define number of chunks
+        num_chunks = chunk_index + 1
+        # Return number of chunks
+        return num_chunks
 
     # Search function
     def search(self, cluster_names, verbose=False):

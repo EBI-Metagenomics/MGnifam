@@ -183,19 +183,19 @@ class HMMSearch(HMMER):
         super(HMMSearch, self).__init__(cmd=cmd, env=env)
 
     def run(
-        self, hmm_path, ds_path, out_path='/dev/null', cpu=None, z=None,
-        # Other tabular output formats
-        tblout_path='', domtblout_path='', pfamtblout_path=''
+        self, hmm_path, target_path, out_path='/dev/null', num_cpus=None,
+        e=10.0, z=None, tblout_path='', domtblout_path='', pfamtblout_path=''
     ):
         """Run hmmsearch with some options
 
         Args
         hmm_path (str)          Path to Hidden Markov Model (HMM) previously
                                 created through hmmbuild
-        ds_path (str)           Path to dataset against which given HMM must be
+        target_path (str)       Path to dataset against which given HMM must be
                                 searched
         out_path (str)          Path to output file
-        cpu (int)               Number of cpus to be used in multithreading
+        num_cpus (int)          Number of cpus to be used in multithreading
+        e (float)               Maximum e-value threshold
         z (int)                 Z value (length of the dataset) to be used
                                 in E-value computation
         tblout (str)            Path to tabular per-sequence output
@@ -216,10 +216,13 @@ class HMMSearch(HMMER):
         cmd += ['-o', out_path] if out_path else []
 
         # Set number of cpus used, if any
-        cmd += ['--cpu', str(cpu)] if cpu else []
+        cmd += ['--cpu', str(num_cpus)] if num_cpus else []
+
+        # Set E-value
+        cmd += ['-E', str(e)] if e is not None else []
 
         # Set Z value
-        cmd += ['-Z', str(z)] if z else []
+        cmd += ['-Z', str(z)] if z is not None else []
 
         # Set tabular formats
         cmd += ['--tblout', tblout_path] if tblout_path else []
@@ -229,7 +232,7 @@ class HMMSearch(HMMER):
         # Set input hmm file
         cmd += [hmm_path]
         # Set input dataset path
-        cmd += [ds_path]
+        cmd += [target_path]
 
         # Run HMM search
         return subprocess.run(
@@ -241,7 +244,7 @@ class HMMSearch(HMMER):
         )
 
     @staticmethod
-    def get_resources(max_memory, model_len, max_cpus=1, longest_seq=4e04, num_bytes=48):
+    def get_cpus(max_memory, model_len, max_cpus=1, longest_seq=4e04, num_bytes=48):
         """Computes the resources needed to run hmmscan
 
         Number of cpus is the maximum number of cpus satisfying the following:
@@ -253,7 +256,7 @@ class HMMSearch(HMMER):
                 num_bytes is the number of bytes in the dp
 
         Args
-        max_memory (int)        Maximum number of Gb that can be allocated to
+        max_memory (int)        Maximum number of Bytes that can be allocated to
                                 run hmmscan (on a single LSF job)
         longest_seq (int)       Length of the longest sequence in hmmscan target
                                 dataset
@@ -266,7 +269,7 @@ class HMMSearch(HMMER):
                                 are not fitting computational ones)
         """
         # Compute number of Gb required by a single core
-        req_memory = math.ceil((model_len * longest_seq * num_bytes)/1e09)
+        req_memory = math.ceil(model_len * longest_seq * num_bytes)
         # Loop from maximum number of CPUS to minimum (1)
         for num_cpus in range(max_cpus, 0, -1):
             # Check memory allocated to a single core
@@ -410,7 +413,7 @@ if __name__ == '__main__':
     # Define a temporary file for HMM
     hmm_path = NamedTemporaryFile(delete=False).name
     # Log build start
-    print('Building HMM from SEED alignment...')
+    print('Building HMM from SEED alignment...', end='', flush=False)
     # Run HMM build
     hmm_build.run(
         msa_path=seed_path,
@@ -421,11 +424,11 @@ if __name__ == '__main__':
     # Load HMM result from file
     hmm_object = HMM.from_file(hmm_path)
     # Debug
-    print('Loaded HMM object:')
-    print('  name:', hmm_object.name)
-    print('  length:', hmm_object.length)
-    print('  alphabet:', hmm_object.alphabet)
-    print()
+    print('DONE (name: {:s}, length: {:d}, alphabet: {:s})'.format(
+        hmm_object.name,
+        hmm_object.length,
+        hmm_object.alphabet
+    ))
 
     # Define a new instance of hmm search script
     hmm_search = HMMSearch()
@@ -435,8 +438,10 @@ if __name__ == '__main__':
     ran, took = benchmark(
         fn=hmm_search.run,
         hmm_path=hmm_path,
-        ds_path=chunk_path,
-        domtblout_path='/dev/stdout'
+        target_path=chunk_path,
+        domtblout_path='/dev/stdout',
+        e=10,
+        z=int(1e07)
     )
     # Remove temporary input chunk
     os.remove(chunk_path)
@@ -445,7 +450,8 @@ if __name__ == '__main__':
     # Store resulting table
     results = [row for row in iter_domtblout(iter(ran.stdout.split('\n')))]
     # Verbose
-    print('Retrieved {:d} results in {:.0f} seconds'.format(len(results), took))
+    print('Retrieved {:d} results in {:.0f} seconds:'.format(len(results), took))
+    print('\n'.join([str(r) for r in results]))
     print()
 
 
