@@ -67,8 +67,8 @@ class Bjob(object):
             encoding='utf-8',  # Encoding
             args=args  # bsub arguments
         )
-        # Debug
-        print('bjobs (submit):', out)
+        # # Debug
+        # print('bjobs (submit):', out)
         # Retrieve job id
         id = cls.id_from_string(out.stdout)
         # Return retrieved Bjob instance with give job id
@@ -115,8 +115,8 @@ class Bjob(object):
             encoding='utf-8',
             args=['bjobs', '-noheader', '-a', job_id]
         )
-        # Debug
-        print('bjobs (status):', out)
+        # # Debug
+        # print('bjobs (status):', out)
         # Match bjobs row format
         match = re.search(r'^(\S+)\s+(\S+)\s+(\S+)\s+', out.stdout)
         # Case row format does not match
@@ -149,7 +149,7 @@ class Bjob(object):
         """
         # Retrieve job id
         job_id = str(re.search(r'^Job \<([\d]+)\>', in_string).group(1))
-        # Debug
-        print('Retrieved job id: {}'.format(job_id))
+        # # Debug
+        # print('Retrieved job id: {}'.format(job_id))
         # Return retrieved job id
         return job_id

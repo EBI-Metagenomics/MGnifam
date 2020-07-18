@@ -13,6 +13,7 @@ import os
 import re
 
 # Custom dependencies
+from src.utils import open_file
 from src.sequences import fasta_iter
 
 
@@ -93,11 +94,20 @@ class MSA(object):
         return (n * m) <= 0
 
     # Load from aligned file
-    def from_aln(self, in_path):
+    @classmethod
+    def from_aln(cls, in_path):
+        """Load MSA from .aln file
+
+        Args
+        in_path (str)   Path to MSA .aln file (even if gzipped)
+
+        Return
+        (MSA)           Loaded MSA object
+        """
         # Initialize entries dictionary (key is accession)
         entries = dict()
         # Read file
-        with open(in_path, 'r') as in_file:
+        with open_file(in_path, 'r', 'rt') as in_file:
             # Loop through each line in file
             for line in in_file:
                 # Get current (last) key
@@ -125,13 +135,15 @@ class MSA(object):
         acc = [k for k in entries.keys() if k != '']
         # Get residues matrix
         res = list([entries[k]['res'] for k in acc])
+        # Init new MSA object
+        msa = cls()
         # Store current data (cast to numpy array)
-        self.acc = np.array(acc, dtype=np.unicode_)
-        self.aln = np.array(res, dtype=np.unicode_)
-        self.beg = np.array([entries[k]['beg'] for k in acc], dtype=np.int)
-        self.end = np.array([entries[k]['end'] for k in acc], dtype=np.int)
+        msa.acc = np.array(acc, dtype=np.unicode_)
+        msa.aln = np.array(res, dtype=np.unicode_)
+        msa.beg = np.array([entries[k]['beg'] for k in acc], dtype=np.int)
+        msa.end = np.array([entries[k]['end'] for k in acc], dtype=np.int)
         # Return self, allow chaining
-        return self
+        return msa
 
     # Print out alignment to fasta file
     def to_aln(self, out_path):
@@ -163,8 +175,10 @@ class MSA(object):
         return self
 
     # Load from fasta file
-    def from_fasta(self, in_file, acc_regex=r'^>(.*)[\n\r]*$'):
-        """
+    @classmethod
+    def from_fasta(cls, in_file, acc_regex=r'^>(.*)[\n\r]*$'):
+        """Load MSA from .fasta
+
         Args
         in_file     (file)  Buffer for reading input fasta file
         acc_regex   (str)   Regex used to extract accession number (or a
@@ -174,6 +188,8 @@ class MSA(object):
         Return
         self                Allows chaining
         """
+        # Initialize output MSA object
+        msa = cls()
         # Initialize alignment matrix as list (of numpy arrays)
         aln = list()
         # Initialize accession number, begin and end positions as lists
@@ -187,16 +203,16 @@ class MSA(object):
             # Save residues for current aligned sequence
             aln.append(list(residues))
         # Update attributes
-        self.aln = np.array(aln)
-        self.acc = np.array(acc)
+        msa.aln = np.array(aln)
+        msa.acc = np.array(acc)
         # Compute number of non-gap reisudes for each aligned sequence
-        not_gap = (self.aln != self.gap).sum(axis=1)
+        not_gap = (msa.aln != cls.gap).sum(axis=1)
         # Define begin position of each aligned sequence
-        self.beg = (not_gap > 0).astype(np.int)
+        msa.beg = (not_gap > 0).astype(np.int)
         # Define end position of each aligned sequence
-        self.end = not_gap.astype(np.int)
+        msa.end = not_gap.astype(np.int)
         # Return reference to current object (allows chaining)
-        return self
+        return msa
 
     # Plot alignment matrix as heatmap
     def plot_heatmap(self, ax, score='gap', cmap=None):
@@ -310,91 +326,157 @@ class MSA(object):
         # Return encoded matrix as integer matrix
         return encoded.astype(np.int)
 
-    @classmethod
-    def consensus(cls, x, axis=0):
-        # Get one hot encoded matrix (copy, include gaps)
-        x = cls.one_hot_encode(x, include_gap=True)
-        # Get shapes (n rows, m columns, k features)
-        n, m, k = x.shape
-        # Define consensus matrix (m alignment columns x 20 residues)
-        freqs = np.sum(x, axis=axis) / x.shape[axis]
-        # Return consensus matrix
-        return freqs
+    # @classmethod
+    # def consensus(cls, x, axis=0):
+    #     # Get one hot encoded matrix (copy, include gaps)
+    #     x = cls.one_hot_encode(x, include_gap=True)
+    #     # Get shapes (n rows, m columns, k features)
+    #     n, m, k = x.shape
+    #     # Define consensus matrix (m alignment columns x 20 residues)
+    #     freqs = np.sum(x, axis=axis) / x.shape[axis]
+    #     # Return consensus matrix
+    #     return freqs
+    #
+    # @classmethod
+    # def occupancy(cls, x, axis=0):
+    #     """
+    #     x:      numpy matrix (n rows, m columns) on which occupancy must be
+    #             computed as the sum of occupied cells over all the occupied
+    #             positions. A cell is occupied when symbol is not gap (-);
+    #     """
+    #     # Define consensus matrix (m alignment columns x 20 residues)
+    #     freqs = cls.consensus(x, axis=axis)
+    #     # Define occupancy array (sum all consensus without gaps)
+    #     avg = np.sum(freqs[:, :-1], axis=1)
+    #     # Return either occupancy and consensus
+    #     return avg, freqs
+    #
+    # @classmethod
+    # def conservation(cls, x, axis=0):
+    #     """
+    #     x:      numpy matrix (n-dimensional) on which conservation is computed,
+    #             as the shannon entropy of each considered cell;
+    #     base:   logarithm base used in Shannon entropy computation;
+    #     """
+    #     # Define consensus matrix (m alignment columns x 20 residues)
+    #     freqs = cls.consensus(x, axis=axis)
+    #     # Compute shannon entropy
+    #     entropy = np.nansum(-(freqs[:, :-1] * np.log(freqs[:, :-1])), axis=1)
+    #     # Return entropy for every column
+    #     return entropy, freqs
+    #
+    # @classmethod
+    # def prettiness(cls, x):
+    #     """
+    #     Prettiness score is the mean conservation multiplied over the minimum
+    #     between number of rows and number of columns.
+    #
+    #     Args:
+    #     x:          numpy matrix (n rows, m columns)
+    #
+    #     Return:
+    #     (float):    prettiness score
+    #     """
+    #     # Get alignment shape as n rows and m columns
+    #     n, m = x.shape
+    #     # Compute conservation
+    #     csv, _ = cls.conservation(x)
+    #     # Return prettiness
+    #     return np.mean(csv) * min(n, m)
+    #
+    # @classmethod
+    # def redundancy(cls, x):
+    #     """
+    #     Computes redundancy among each pair of sequence in multiple sequence
+    #     alignment, i.e. the number of total equal rediues with respect to
+    #     the total number of (non-gap) residues
+    #     """
+    #     # Get shape of input alignment matrix (n rows, m columns)
+    #     n, m = x.shape
+    #     # Make a new matrix with shape n x n
+    #     redundancy = np.identity(n, dtype=np.float)
+    #     # Loop through each row in redundancy matrix
+    #     for i in range(0, n):
+    #         # Loop through each column in redundancy matrix
+    #         for j in range(i+1, n):
+    #             # Non-gap residues in i-th sequence
+    #             seq_i = (x[i, :] != cls.gap).astype(np.int)
+    #             # Non-gap residues in j-th sequence
+    #             seq_j = (x[j, :] != cls.gap).astype(np.int)
+    #             # Non-gap and equal residues among i-th and j-th sequence
+    #             seq_i_j = seq_i * seq_j * (x[i, :] == x[j, :]).astype(np.int)
+    #             # Equal residues wrt number of residues in i-th seqeunce
+    #             redundancy[i, j] = np.sum(seq_i_j) / np.sum(seq_i)
+    #             # Equal residues wrt number of residues in j-th seqeunce
+    #             redundancy[j, i] = np.sum(seq_i_j) / np.sum(seq_j)
+    #     # Return redundancy matrix
+    #     return redundancy
 
-    @classmethod
-    def occupancy(cls, x, axis=0):
-        """
-        x:      numpy matrix (n rows, m columns) on which occupancy must be
-                computed as the sum of occupied cells over all the occupied
-                positions. A cell is occupied when symbol is not gap (-);
-        """
-        # Define consensus matrix (m alignment columns x 20 residues)
-        freqs = cls.consensus(x, axis=axis)
-        # Define occupancy array (sum all consensus without gaps)
-        avg = np.sum(freqs[:, :-1], axis=1)
-        # Return either occupancy and consensus
-        return avg, freqs
 
-    @classmethod
-    def conservation(cls, x, axis=0):
-        """
-        x:      numpy matrix (n-dimensional) on which conservation is computed,
-                as the shannon entropy of each considered cell;
-        base:   logarithm base used in Shannon entropy computation;
-        """
-        # Define consensus matrix (m alignment columns x 20 residues)
-        freqs = cls.consensus(x, axis=axis)
-        # Compute shannon entropy
-        entropy = np.nansum(-(freqs[:, :-1] * np.log(freqs[:, :-1])), axis=1)
-        # Return entropy for every column
-        return entropy, freqs
+# Compute consensus
+def consensus(x, axis=0):
+    # Get one hot encoded matrix (copy, include gaps)
+    x = MSA.one_hot_encode(x, include_gap=True)
+    # Get shapes (n rows, m columns, k features)
+    n, m, k = x.shape
+    # Define consensus matrix (m alignment columns x 20 residues)
+    freq = np.sum(x, axis=axis) / x.shape[axis]
+    # Return consensus matrix
+    return freq
 
-    @classmethod
-    def prettiness(cls, x):
-        """
-        Prettiness score is the mean conservation multiplied over the minimum
-        between number of rows and number of columns.
 
-        Args:
-        x:          numpy matrix (n rows, m columns)
+# Compute occupancy
+def occupancy(x):
+    """Compute occupancy score
 
-        Return:
-        (float):    prettiness score
-        """
-        # Get alignment shape as n rows and m columns
-        n, m = x.shape
-        # Compute conservation
-        csv, _ = cls.conservation(x)
-        # Return prettiness
-        return np.mean(csv) * min(n, m)
+    Args
+    x (np.ndarray)      Consensus matrix
+    axis (int)          Axis along which occupancy score must be computed
+                        (0 for rows, 1 for columns)
 
-    @classmethod
-    def redundancy(cls, x):
-        """
-        Computes redundancy among each pair of sequence in multiple sequence
-        alignment, i.e. the number of total equal rediues with respect to
-        the total number of (non-gap) residues
-        """
-        # Get shape of input alignment matrix (n rows, m columns)
-        n, m = x.shape
-        # Make a new matrix with shape n x n
-        redundancy = np.identity(n, dtype=np.float)
-        # Loop through each row in redundancy matrix
-        for i in range(0, n):
-            # Loop through each column in redundancy matrix
-            for j in range(i+1, n):
-                # Non-gap residues in i-th sequence
-                seq_i = (x[i, :] != cls.gap).astype(np.int)
-                # Non-gap residues in j-th sequence
-                seq_j = (x[j, :] != cls.gap).astype(np.int)
-                # Non-gap and equal residues among i-th and j-th sequence
-                seq_i_j = seq_i * seq_j * (x[i, :] == x[j, :]).astype(np.int)
-                # Equal residues wrt number of residues in i-th seqeunce
-                redundancy[i, j] = np.sum(seq_i_j) / np.sum(seq_i)
-                # Equal residues wrt number of residues in j-th seqeunce
-                redundancy[j, i] = np.sum(seq_i_j) / np.sum(seq_j)
-        # Return redundancy matrix
-        return redundancy
+    Return
+    (np.array)          Occupancy score array
+    """
+    # Define occupancy array (sum all consensus without gaps)
+    occ = np.sum(x[:, :-1], axis=1)
+    # Return either occupancy and consensus
+    return occ
+
+
+# Compute conservation
+def conservation(x):
+    """Compute conservation bit-score
+
+    Args
+    x (np.ndarray)      Consensus matrix
+    axis (int)          Axis along which conservation bit-score must be computed
+                        (0 for rows, 1 for columns)
+
+    Return
+    (np.array)          Conservation bit-score array
+    """
+    # Compute shannon entropy
+    entropy = np.nansum(-(x[:, :-1] * np.log(x[:, :-1])), axis=1)
+    # Return entropy for every column
+    return entropy
+
+
+# Compute prettiness
+def prettiness(x, n, m):
+    """Compute prettiness score
+    Prettiness score is the mean conservation multiplied over the minimum
+    between number of rows and number of columns.
+
+    Args
+    x (np.ndarray)  Conservation array for a specific MSA
+    n (int)         Number of rows in MSA
+    m (int)         Number of columns in MSA
+
+    Return:
+    (float)         prettiness score
+    """
+    # Return prettiness
+    return np.mean(x) * min(n, m)
 
 
 class Muscle(object):
@@ -464,7 +546,6 @@ class Muscle(object):
 
         # Return output multiple sequence alignment
         return out_msa
-
 
 
 # Unit testing
