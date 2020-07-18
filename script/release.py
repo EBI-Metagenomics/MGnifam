@@ -226,7 +226,7 @@ class Release(Pipeline):
         log['pfbuild'] = took_time
 
         # Check uniprot overlappings
-        self.check_uniprot(batch_path, env=self.env)
+        self.check_uniprot(batch_path)
 
     # Run mgseed.pl
     def mgseed(self, cluster_name, cwd='./'):
