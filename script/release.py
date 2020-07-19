@@ -2,9 +2,6 @@
 from os import path, environ, mkdir
 from glob import glob, iglob
 from time import time
-
-# import matplotlib.pyplot as plt
-# import matplotlib
 import numpy as np
 import subprocess
 import argparse
@@ -14,9 +11,6 @@ import json
 import sys
 import os
 import re
-
-# # Set plotting non iteractive
-# matplotlib.use('Agg')
 
 # Updating python path
 sys.path.append(path.dirname(path.realpath(__file__) + '/..'))
@@ -43,62 +37,40 @@ class Release(Pipeline):
         self.env = env
 
     # Execute pipeline
-    def run(self, clusters_paths, out_dir, batch_size=100, num_clusters=np.inf, log_path='', verbose=False):
-        # Intiialize timer
-        time_beg = time()
-        # Initialize logging dictionary
-        log = {
-            # Input parameters
-            'batch_size': batch_size,
-            'num_clusters': num_clusters,
-            'out_dir': out_dir,
-            # Batch list
-            'batch': [],
-            # Build log
-            'build': {},
-            # Total execution time
-            'total': 0.0
-        }
+    def run(self, clusters_paths, out_dir, batch_size=100, max_clusters=None, log_path='', verbose=False):
 
         # Case output directory does not exist: make one
         if not path.exists(out_dir):
             # Make directpry (could raise filesystem errors)
             mkdir(out_dir)
 
-        # Get list of paths to clusters .tsv files
-        clusters_paths = get_paths(clusters_paths)
+        # Intiialize timer
+        tot_time = time()
+        # Initialize logging dictionary
+        log = Log(log_path=log_path, log_dict={
+            # Input parameters
+            'batch_size': batch_size,
+            'max_clusters': max_clusters,
+            'out_dir': out_dir,
+            # pfbuild computational time
+            'pfbuild_time': 0.0,
+            # mfbuild computational time
+            'mfbuild_time': 0.0,
+            # Total execution time
+            'tot_time': 0.0
+        })
 
-        # Initialize index and members of current batch
-        i, batch = 0, list()
-        # Loop through every clusters .tsv file paths
-        for clusters_path in clusters_paths:
-            # Open clusters .tsv file
-            with open(clusters_path, 'r') as cluster_file:
-                # Loop through every line in file
-                for line in cluster_file:
-                    # Match cluster name and size in current line
-                    match = re.search(r'^([a-zA-Z0-9]+)\s+(\d+)', line)
-                    # Skip if current line does not match expected format
-                    if not match: continue
-                    # Otherwise, store cluster name and size
-                    cluster_name, cluster_size = str(match.group(1)), int(match.group(2))
-                    # Add cluster name to current batch
-                    batch.append(cluster_name)
-                    # Update cluster index
-                    i = i + 1
-                    # Case index matches batch size or total clusters size
-                    if (i % batch_size == 0) or (i >= num_clusters):
-                        # Define batch index
-                        j = (i - 1) // batch_size
-                        # Define batch directory path
-                        batch_path = path.join(out_dir, 'batch{:d}'.format(j))
-                        # Run batch clusters maker
-                        batch_log = self.run_batch(
-                            cluster_names=batch,  # List of cluster names
-                            batch_path=batch_path  # Clusters output directory
-                        )
-                        # Store batch log into pipeline log
-                        log.setdefault('batch', []).append(batch_log)
+        # Define batches iterator
+        batch_iter = self.iter_clusters(clusters_paths, batch_size=batch_size, max_clusters=max_clusters)
+        # Loop through each batch
+        for batch_index, cluster_names in batch_iter:
+            # Define batch directory path
+            batch_path = path.join(out_dir, 'batch_{:d}'.format(batch_index))
+            # Run batch clusters maker
+            self.run_batch(
+                cluster_names=cluster_names,  # List of cluster names
+                batch_path=batch_path  # Clusters output directory
+            )
 
         # Define build directory
         build_path = path.join(out_dir, 'build')
@@ -112,9 +84,9 @@ class Release(Pipeline):
             # Get cluster name
             cluster_name = path.basename(cluster_batch_path)
             # Define new cluster path
-            cluster_build_path = os.join(build_path, cluster_name)
+            cluster_build_path = path.join(build_path, cluster_name)
             # Copy from batch path to build path
-            shutil.copy(cluster_batch_path, cluster_build_path)
+            shutil.copytree(cluster_batch_path, cluster_build_path)
             # Save cluster build path to
             clusters_paths.append(cluster_build_path)
 
@@ -125,10 +97,19 @@ class Release(Pipeline):
             # Exclude sequences with less than half occupancy
             OccupancyFilter(threshold=0.5, inclusive=True)
         ])
+
+        # Intialize path for discarded clusters
+        noaln_path = os.path.join(build_path, 'NOALN')
+        # Make directory
+        mkdir(noaln_path)
         # Loop through each SEED alignment
         for cluster_path in clusters_paths:
             # Trim cluster's SEED alignment
-            self.trim_seed(cluster_path, transform=transform)
+            self.trim_seed(
+                cluster_path=cluster_path,
+                noaln_path=noaln_path,
+                transform=transform
+            )
 
         # Run HMMs against UniProt
         _, took_time = benchmark(fn=Bjob.check, delay=self.delay, bjobs=list(map(
@@ -138,7 +119,7 @@ class Release(Pipeline):
             clusters_paths
         )))
         # Store execution time
-        log['build']['pfbuild'] = took_time
+        log({'pfbuild_time': round(took_time, 2)})
 
         # Check uniprot overlappings in build path
         self.check_uniprot(build_path)
@@ -153,16 +134,69 @@ class Release(Pipeline):
             clusters_paths
         )))
         # Store execution time
-        log['build']['mfbuild'] = took_time
+        log({'mfbuild_time': round(took_time, 2)})
 
-        # Update log with total execution time
-        log['total'] = time() - time_beg
-        # Case log to path is set
-        if log_path:
-            # Open log path file
-            with open(log_path, 'w') as log_file:
-                # Dump log dictionary to file
-                json.dump(log, log_path, indent=2)
+        # Update log
+        log({'tot_time': round(time() - tot_time, 2)})
+
+    @staticmethod
+    def iter_clusters(clusters_paths, batch_size=1000, max_clusters=None):
+        """Iterate through clusters files
+
+        Args
+        clusters_paths (str/list)   Path or list of paths to linclust files
+        batch_size (int)            Maximum number of clusters per batch
+        max_clusters (int)          Maximum number of clusters to iterate
+
+        Return
+        (generator)                 A generator that yelds batch as
+                                    tuple(batch index, cluster names)
+        """
+        # Initialize current cluster index
+        cluster_index = 0
+        # Initialize current batch index
+        batch_index = 0
+        # Initialize current batch of clusters
+        batch_clusters = list()
+        # Loop through each linclust input path
+        for cluster_path in get_paths(clusters_paths):
+            # Open current linclust path
+            with open(cluster_path, 'r') as cluster_file:
+                # Loop through each line in current linclust file path
+                for cluster_line in cluster_file:
+                    # Check if current line is matches expected format
+                    match = re.search(r'^(\S+)\s+(\d+)', cluster_line)
+                    # Case line does not match expected format: skip
+                    if not match: continue
+                    # Otherwise, retrieve cluster name and cluster size
+                    cluster_name = str(match.group(1))
+                    cluster_size = str(match.group(2))
+                    # Add current cluster name to batch
+                    batch_clusters.append(cluster_name)
+                    # Update current cluster index
+                    cluster_index += 1
+                    # Define batch index
+                    batch_index = (cluster_index - 1) // batch_size
+                    # Case cluster index has reached maximum size, exit loop
+                    if (max_clusters is not None) and (cluster_index >= max_clusters):
+                        break
+                    # Check if cluster index has not reached batch size
+                    elif (cluster_index % batch_size) != 0:
+                        # Go to next iteration
+                        continue
+                    # Case cluster size has reached batch size
+                    else:
+                        # Yield batch index and list of clusters
+                        yield batch_index, batch_clusters
+                        # Reset batch of clusters
+                        batch_clusters = list()
+                # Case cluster index has reached maximum size, exit loop
+                if (max_clusters is not None) and (cluster_index >= max_clusters):
+                    break
+        # In case we reached this point, check for non returned clusters
+        if len(batch_clusters) > 0:
+            # Yield last batch
+            yield batch_index, batch_clusters
 
     # Run batch of clusters
     def run_batch(self, cluster_names, batch_path, verbose=False):
@@ -188,17 +222,24 @@ class Release(Pipeline):
         (OSError)               In case of permission or filesystem issues
         """
 
-        # Initialize log
-        log = dict()
-
-        # Debug
-        print('Running mgseed.pl for {:d} clusters in batch {:s}'.format(
-            len(cluster_names),  # Number of clusters
-            batch_path  # Current batch path
-        ))
+        # # Debug
+        # print('Running mgseed.pl for {:d} clusters in batch {:s}'.format(
+        #     len(cluster_names),  # Number of clusters
+        #     batch_path  # Current batch path
+        # ))
 
         # Make batch directory (could raise error)
-        os.mkdir(batch_path)
+        mkdir(batch_path)
+        # Start timer
+        tot_time = time()
+        # Define log path
+        log_path = os.path.join(batch_path, 'batch.json')
+        # Initialize log
+        log = Log(log_path=log_path, log_dict={
+            'pfbuild_time': 0.0,
+            'mfbuild_time': 0.0,
+            'tot_time': 0.0
+        })
 
         # Launch and check mgseed jobs
         _, took_time = benchmark(fn=Bjob.check, delay=self.delay, bjobs=list(map(
@@ -210,23 +251,28 @@ class Release(Pipeline):
             # Input values
             cluster_names
         )))
-        # Store execution time
-        log['mgseed'] = took_time
+        # Update log
+        log({'mgseed_time': round(took_time, 2)})
 
         # Retrieve cluster paths
         cluster_paths = glob.glob(batch_path + '/MGYP*')
         # Launch pfbuild scripts
         _, took_time = benchmark(fn=Bjob.check, delay=self.delay, bjobs=list(map(
             # Mapped function
-            lambda cluster_path: self.pfbuild(cluster_path),
+            lambda cluster_path: self.pfbuild(
+                cluster_path
+            ),
             # Input values
             cluster_paths
         )))
-        # Store execution time
-        log['pfbuild'] = took_time
+        # Update log
+        log({'pfbuild_time': round(took_time, 2)})
 
         # Check uniprot overlappings
         self.check_uniprot(batch_path)
+
+        # Update log
+        log({'tot_time': round(tot_time - time(), 2)})
 
     # Run mgseed.pl
     def mgseed(self, cluster_name, cwd='./'):
@@ -283,7 +329,7 @@ class Release(Pipeline):
         )
 
     # Trim SEED msa
-    def trim_seed(self, cluster_path, transform):
+    def trim_seed(self, cluster_path, noaln_path, transform):
         """Trim alignments and plot results
         For each cluster in <clusters_paths>, take SEED alignment and rename it as
         SEED_original. Afterwards, create a new SEED alignment by automatically
@@ -292,6 +338,8 @@ class Release(Pipeline):
 
         Args
         cluster_path (list(str))        Path to cluster which must be trimmed
+        noaln_path (list(str))          Path where empty trimmed alignments
+                                        must be moved (discarded)
         transform (transform.Transform) Transformer which will be fed with original
                                         SEED alignment and produce the trimmed one
         out_path (str)                  Path where to store generic outputs such as
@@ -310,8 +358,14 @@ class Release(Pipeline):
         seed = MSA.from_aln(path.join(cluster_path, 'SEED_raw'))
         # Go through multiple sequence alignment transformation pipeline
         seed = transform(seed)
-        # Store new SEED multiple sequence alignment to file
-        seed.to_aln(path.join(cluster_path, 'SEED'))
+        # Case trimmed alignment is empty
+        if seed.is_empty():
+            # Discard current cluster
+            shutil.move(cluster_path, os.path.join(noaln_path, cluster_name))
+        # Otherwise
+        else:
+            # Store new SEED multiple sequence alignment to file
+            seed.to_aln(path.join(cluster_path, 'SEED'))
 
 
 # # Run mgseed.pl
@@ -605,7 +659,7 @@ if __name__ == '__main__':
         help='Path to directory where outcomes will be stored'
     )
     parser.add_argument(
-        '--num_clusters', type=int, default=1000,
+        '--max_clusters', type=int, required=False,
         help='Maximum number of clusters to process'
     )
     parser.add_argument(
@@ -623,8 +677,7 @@ if __name__ == '__main__':
     # Get input clusters paths
     in_clusters = args.in_clusters
     # Get maximum number of cluster to process
-    num_clusters = args.num_clusters
-    num_clusters = np.inf if num_clusters is None else int(num_clusters)
+    max_clusters = args.max_clusters
     # Get batch size
     batch_size = args.batch_size
     # Get path to log file
@@ -670,7 +723,7 @@ if __name__ == '__main__':
         # Set batch size,
         batch_size=batch_size,
         # Set maximum number of clusters
-        num_clusters=num_clusters,
+        max_clusters=max_clusters,
         # Path to log file
         log_path=log_path,
         # Verbose output (not working)

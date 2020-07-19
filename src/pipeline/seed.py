@@ -4,20 +4,21 @@ import shutil
 import time
 import sys
 import os
+import re
 
 from src.utils import get_paths
 from src.pipeline.pipeline import Pipeline, Log
 from src.dataset import LinClust, Fasta
 from src.msa import MSA, Muscle
-from src.hmm import HMM, HMMBuild, HMMSearch
+from src.transform import Compose, OccupancyTrim, OccupancyFilter
 from src.disorder import MobiDBLite
 import src.disorder as disorder
 
-# Plotting dependencies
-import matplotlib.pyplot as plt
-import matplotlib
-# Do not use interactive plotting
-matplotlib.use('Agg')
+# # Plotting dependencies
+# import matplotlib.pyplot as plt
+# import matplotlib
+# # Do not use interactive plotting
+# matplotlib.use('Agg')
 
 
 class SeedPipeline(Pipeline):
@@ -29,32 +30,44 @@ class SeedPipeline(Pipeline):
 
     # Constructor
     def __init__(
-        self, linclust_path, mgnify_path, dask_client,
-        mobidb_env=os.environ.copy(), mobidb_cmd=['mobidb_lite.py'],
-        muscle_env=os.environ.copy(), muscle_cmd=['muscle'],
-        hmm_build_env=os.environ.copy(), hmm_build_cmd=['hmmbuild'],
-        hmm_search_env=os.environ.copy(), hmm_search_cmd=['hmmsearch']
+        self, cluster_type, cluster_kwargs, linclust_path, mgnify_path,
+        occupancy_trim_threshold=0.4, occupancy_trim_inclusive=True,
+        occupancy_filter_threshold=0.5, occupancy_filter_inclusive=True,
+        mobidb_cmd=['mobidb_lite.py'], muscle_cmd=['muscle'],
+        hmm_build_cmd=['hmmbuild'], hmm_search_cmd=['hmmsearch'],
+        env=os.environ.copy()
     ):
+        # Call parent constructor
+        super().__init__(cluster_type, cluster_kwargs)
+        # Store environmental variables
+        self.env = env
         # Retrieve clusters dataset
         self.ds_linclust = LinClust.from_list(get_paths(linclust_path))
         # Retrieve MGnify dataset
         self.ds_mgnify = Fasta.from_list(get_paths(mgnify_path))
         # Initialize a new MobiDB Lite instance
-        self.mobidb = MobiDBLite(cmd=mobidb_cmd, env=mobidb_env)
+        self.mobidb = MobiDBLite(cmd=mobidb_cmd, env=self.env)
         # Initialize a new Muscle instance
-        self.muscle = Muscle(cmd=muscle_cmd, env=muscle_env)
-        # Initialize a new hmmbuild instance
-        self.hmm_build = HMMBuild()
-        # Initialize a new hmmsearch instance
-        self.hmm_search = HMMSearch()
-        # Set client (Client(LocalCluster) by default)
-        self.dask_client = self.get_client()
+        self.muscle = Muscle(cmd=muscle_cmd, env=self.env)
+        # Initialize automatic trimming pipeline
+        self.trim = Compose([
+            # Exclude regions outside N- and C- terminal
+            OccupancyTrim(
+                threshold=occupancy_trim_threshold,
+                inclusive=occupancy_trim_inclusive
+            ),
+            # Exclude sequences with less than half occupancy
+            OccupancyFilter(
+                threshold=occupancy_filter_threshold,
+                inclusive=occupancy_filter_inclusive
+            )
+        ])
 
     # Run Seed alignment (for a single cluster)
     def run(
         self, cluster_names, clusters_dir,
-        comp_bias_threshold=0.8, comp_bias_inclusive=True,
-        verbose=False
+        comp_bias_threshold=0.2, comp_bias_inclusive=True,
+        min_jobs=1, max_jobs=100, log_path=None, verbose=False
     ):
         """Run SEED and HMM creation block
         Takes as input the <cluster_names> list and retrieves cluster members.
@@ -73,17 +86,25 @@ class SeedPipeline(Pipeline):
         clusters_dir (str)          Root folder for clusters folders and logs
         comp_bias_threshold (float) Threshold for maximum compositional bias a
                                     cluster can have to not be discarded
+        comp_bias_inclusive (bool)  Wether to include threshold value or not
+        min_jobs                    Minimum number of jobs dask client can spawn
+        max_jobs                    Maximum number of jobs dask client can spawn
+        log_path (str)              Path where to store log dictionary
         verbose (bool)              Wether to print progress to output shell
-        """
 
-        # Case output directory does not exits
+        Return
+        (Log)                       Log object, filled during execution
+        """
+        # Try to make output directory
         if not os.path.exists(clusters_dir):
-            # Make directory, this can raise exception
             os.mkdir(clusters_dir)
-        # Define log path (only if required)
-        log_path = os.path.join(clusters_dir, 'log.json')
+
+        # Initialize timers
+        time_beg, time_end = time.time(), None
         # Initialize new log
-        log = Log(log_path=log_path, log_dict={
+        log = Log(
+            log_path=log_path,
+            log_dict={
             # Path to clusters directory
             'clusters_dir': clusters_dir,
             # Time required to run the pipeline entirely
@@ -99,32 +120,26 @@ class SeedPipeline(Pipeline):
             # BIAS clusters information
             'bias_clusters': {
                 'num_clusters': 0,
-                # 'num_sequences': 0,
                 'avg_sequences': 0.0,
                 'avg_bias': 0.0
             },
-            # # UniProt clusters information
-            # 'uniprot_clusters': {
-            #     'num_clusters': 0,
-            #     'num_sequences': 0,
-            #     'avg_sequences': 0.0,
-            #     'avg_bias': 0.0
-            # },
-            # Resulting clusters information
-            'result_clusters': {
+            # Remaining clusters information
+            'kept_clusters': {
                 'num_clusters': 0,
-                # 'num_sequences': 0,
                 'avg_sequences': 0.0,
                 'avg_bias': 0.0
             }
         })
 
-        # Initialize timers
-        time_beg, time_end = time.time(), None
+        # Make new dask client
+        client = self.get_client()
+        # Adapt client
+        client.cluster.adapt(minimum=min_jobs, maximum=max_jobs)
 
         # Retrieve cluster members from clusters .tsv dataset
         cluster_members = self.get_cluster_members(
             cluster_names=cluster_names,
+            client=client,
             verbose=verbose
         )
         # Check cluster members (raises error)
@@ -143,6 +158,7 @@ class SeedPipeline(Pipeline):
         # Retrieve fasta sequences from MGnify .fa dataset
         fasta_sequences, mgnify_length = self.get_fasta_sequences(
             sequences_acc=sequences_acc,
+            client=client,
             verbose=verbose
         )
 
@@ -156,18 +172,19 @@ class SeedPipeline(Pipeline):
         comp_bias = self.compute_comp_bias(
             cluster_members=cluster_members,
             fasta_sequences=fasta_sequences,
+            client=client,
             verbose=verbose
         )
 
-        # Define compositional bias plot path
-        bias_plot_path = os.path.join(clusters_dir, 'init_comp_bias.png')
-        # Plot compositional bias
-        self.plot_comp_bias(
-            # Compositional bias values
-            comp_bias=[*comp_bias.values()],
-            # Where to store plot
-            out_path=bias_plot_path
-        )
+        # # Define compositional bias plot path
+        # bias_plot_path = os.path.join(clusters_dir, 'init_comp_bias.png')
+        # # Plot compositional bias
+        # self.plot_comp_bias(
+        #     # Compositional bias values
+        #     comp_bias=[*comp_bias.values()],
+        #     # Where to store plot
+        #     out_path=bias_plot_path
+        # )
 
         # Update log with initial information
         log({
@@ -180,8 +197,8 @@ class SeedPipeline(Pipeline):
                 ]),
                 'avg_bias': np.mean([
                     v for k, v in comp_bias.items()
-                ]),
-                'comp_bias_plot': bias_plot_path
+                ])
+                # 'comp_bias_plot': bias_plot_path
             }}
         })
 
@@ -230,30 +247,47 @@ class SeedPipeline(Pipeline):
             cluster_members=cluster_members,
             fasta_sequences=fasta_sequences,
             clusters_dir=clusters_dir,
+            client=client,
             verbose=verbose
         )
 
-        # # Make HMM
-        # self.build_hmms(
-        #     cluster_members=cluster_members,
-        #     cluster_dir=cluster_dir,
-        #     verbose=verbose
-        # )
-        #
-        # # Search HMM against MGnify
-        # self.search_hmms(
-        #     cluster_members=cluster_members,
-        #     cluster_dir=cluster_dir,
-        #     ds_size=mgnify_length,
-        #     target_ds=self.ds_mgnify,
-        #     verbose=verbose
-        # )
+        # Shutdown client
+        client.shutdown()
+
+        # Define path for invalid alignment after trimming
+        noaln_path = os.path.join(clusters_dir, 'NOALN')
+        # Make directory
+        os.mkdir(noaln_path)
+
+        # Automatic sequence alignments trimming
+        for cluster_name in cluster_members:
+            # Define cluster path
+            cluster_path = os.path.join(clusters_dir, cluster_name)
+            # Define SEED alignment path
+            seed_path = os.path.join(cluster_path, 'SEED')
+            # Copy old SEED alignment
+            shutil.copy(seed_path, seed_path + '_raw')
+            # Load SEED alignment
+            seed_aln = MSA.from_aln(seed_path)
+            # Trim SEED
+            seed_aln = self.trim(seed_aln)
+            # Case align is empty
+            if seed_aln.is_empty():
+                # Define new cluster path
+                noaln_cluster_path = os.path.join(noaln_path, cluster_name)
+                # Move current cluster to NOALN folder
+                shutil.move(cluster_path, noaln_cluster_path)
+                # Skip and go to next iteration
+                continue
+            # Save new SEED alignment to file
+            seed_aln.to_aln(seed_path)
 
         # Update timers
         time_end = time.time()
         # Update log
         log({
-            'result_clusters': {**log.result_clusters, **{
+            # Update kept clusters information
+            'kept_clusters': {**log.kept_clusters, **{
                 'num_clusters': len(cluster_members),
                 'avg_sequences': np.mean([
                     len(cluster_members[k]) for k in cluster_members
@@ -264,6 +298,65 @@ class SeedPipeline(Pipeline):
             }},
             'tot_time': round(time_end - time_beg, 2)
         })
+
+    @staticmethod
+    def iter_clusters(clusters_path, batch_size=1000, max_clusters=None):
+        """Iterate through linclust files
+
+        Args
+        clusters_path (str/list)    Path or list of paths to linclust files
+        batch_size (int)            Maximum number of clusters per batch
+        max_clusters (int)          Maximum number of clusters to iterate
+
+        Return
+        (generator)                 A generator that yelds batch as
+                                    tuple(batch index, cluster names)
+        """
+        # Initialize current cluster index
+        cluster_index = 0
+        # Initialize current batch index
+        batch_index = 0
+        # Initialize current batch of clusters
+        batch_clusters = list()
+        # Loop through each linclust input path
+        for clusters_path in get_paths(clusters_path):
+            # Open current linclust path
+            with open(clusters_path, 'r') as clusters_file:
+                # Loop through each line in current linclust file path
+                for cluster_line in clusters_file:
+                    # Check if current line is matches expected format
+                    match = re.search(r'^(\S+)\s+(\d+)', cluster_line)
+                    # Case line does not match expected format: skip
+                    if not match: continue
+                    # Otherwise, retrieve cluster name and cluster size
+                    cluster_name = str(match.group(1))
+                    cluster_size = str(match.group(2))
+                    # Add current cluster name to batch
+                    batch_clusters.append(cluster_name)
+                    # Update current cluster index
+                    cluster_index += 1
+                    # Define batch index
+                    batch_index = (cluster_index - 1) // batch_size
+                    # Case cluster index has reached maximum size, exit loop
+                    if (max_clusters is not None) and (cluster_index >= max_clusters):
+                        break
+                    # Check if cluster index has not reached batch size
+                    elif (cluster_index % batch_size) != 0:
+                        # Go to next iteration
+                        continue
+                    # Case cluster size has reached batch size
+                    else:
+                        # Yield batch index and list of clusters
+                        yield batch_index, batch_clusters
+                        # Reset batch of clusters
+                        batch_clusters = list()
+                # Case cluster index has reached maximum size, exit loop
+                if (max_clusters is not None) and (cluster_index >= max_clusters):
+                    break
+        # In case we reached this point, check for non returned clusters
+        if len(batch_clusters) > 0:
+            # Yield last batch
+            yield batch_index, batch_clusters
 
     # Make clusters directories
     def make_cluster_dirs(self, cluster_names, clusters_dir):
@@ -289,7 +382,7 @@ class SeedPipeline(Pipeline):
                 os.mkdir(cluster_dir)
 
     # Retrieve cluster members for a batch of clusters
-    def get_cluster_members(self, cluster_names, verbose=False):
+    def get_cluster_members(self, cluster_names, client, verbose=False):
         # Initialize output dict(cluster name: sequence acc)
         cluster_members = dict()
         # Intialize timers
@@ -304,14 +397,14 @@ class SeedPipeline(Pipeline):
             ))
 
         # Submit jobs for searching cluster members
-        futures = self.dask_client.map(
+        futures = client.map(
             # Search for cluster members in current chunk
             lambda ds: ds.search(cluster_names),
             # List of cluster datasets
             self.ds_linclust
         )
         # Retrieve found clusters (list of lists)
-        results = self.dask_client.gather(futures)
+        results = client.gather(futures)
         # Loop through resulting clusters dictionaries
         for i in range(len(results)):
             # Loop through every cluster name in result dictionary
@@ -347,21 +440,21 @@ class SeedPipeline(Pipeline):
             ))
 
     # Retrieve cluster sequences for given sequences accession numbers
-    def get_fasta_sequences(self, sequences_acc, verbose=False):
+    def get_fasta_sequences(self, sequences_acc, client, verbose=False):
         # Initialize output dict(sequence acc: fasta entry) and total number of searched sequences
         fasta_sequences, fasta_length = dict(), 0
         # Initialize timers
         time_beg, time_end = time.time(), None
 
         # Submit jobs for searching cluster members sequences
-        futures = self.dask_client.map(
+        futures = client.map(
             # Search for cluster members in current chunk
             lambda ds: ds.search(sequences_acc, ret_length=True),
             # List of cluster datasets
             self.ds_mgnify
         )
         # Retrieve found sequences (list of dict)
-        results = self.dask_client.gather(futures)
+        results = client.gather(futures)
         # Loop through resulting sequences dictionaries
         for i in range(len(results)):
             # Get retrieved sequences dict and dataset length
@@ -446,7 +539,7 @@ class SeedPipeline(Pipeline):
         return disorder.compute_comp_bias(pred)
 
     # Compute compositional bias for every sequence
-    def compute_comp_bias(self, cluster_members, fasta_sequences, verbose=False):
+    def compute_comp_bias(self, cluster_members, fasta_sequences, client, verbose=False):
 
         # Initialize timers
         time_beg, time_end = time.time(), None
@@ -468,7 +561,7 @@ class SeedPipeline(Pipeline):
                 # Save fasta sequence
                 cluster_sequences[acc] = fasta_sequences[acc]
             # Run distributed compositional bias
-            futures.append(self.dask_client.submit(
+            futures.append(client.submit(
                 self.compute_comp_bias_,
                 sequences=cluster_sequences,
                 mobidb=self.mobidb,
@@ -476,7 +569,7 @@ class SeedPipeline(Pipeline):
                 inclusive=True
             ))
         # Get results
-        results = self.dask_client.gather(futures)
+        results = client.gather(futures)
         # Associate cluster name to each compositional bias
         for i in range(len(cluster_names)):
             # Save compositional bias for current cluster
@@ -527,20 +620,20 @@ class SeedPipeline(Pipeline):
         # Return output dictionaries
         return below_threshold, above_threshold
 
-    # Make a plot of compositional bias
-    def plot_comp_bias(self, comp_bias, out_path):
-        # Plot compositional bias distribution
-        fig, ax = plt.subplots(figsize=(10, 5))
-        # Make plot
-        ax.set_title('Compositional Bias distribution')
-        ax.set_xlabel('Compositional Bias')
-        ax.set_ylabel('Number of clusters')
-        ax.hist(comp_bias, density=False, bins=100)
-        ax.set_xlim(left=0.0, right=1.0)
-        # Save plot
-        plt.savefig(out_path)
-        # Close plot
-        plt.close()
+    # # Make a plot of compositional bias
+    # def plot_comp_bias(self, comp_bias, out_path):
+    #     # Plot compositional bias distribution
+    #     fig, ax = plt.subplots(figsize=(10, 5))
+    #     # Make plot
+    #     ax.set_title('Compositional Bias distribution')
+    #     ax.set_xlabel('Compositional Bias')
+    #     ax.set_ylabel('Number of clusters')
+    #     ax.hist(comp_bias, density=False, bins=100)
+    #     ax.set_xlim(left=0.0, right=1.0)
+    #     # Save plot
+    #     plt.savefig(out_path)
+    #     # Close plot
+    #     plt.close()
 
     @staticmethod
     def make_sequences_aln_(sequences, muscle, aln_path):
@@ -563,7 +656,7 @@ class SeedPipeline(Pipeline):
         del aln
 
     # Make multiple sequence alignment
-    def make_sequences_aln(self, cluster_members, fasta_sequences, clusters_dir, verbose=False):
+    def make_sequences_aln(self, cluster_members, fasta_sequences, clusters_dir, client, verbose=False):
 
         # Initialize timers
         time_beg, time_end = time.time(), None
@@ -589,14 +682,14 @@ class SeedPipeline(Pipeline):
             # Define path to SEED alignment
             seed_path = os.path.join(clusters_dir, cluster_name, 'SEED')
             # Run distributed compositional bias
-            futures.append(self.dask_client.submit(
+            futures.append(client.submit(
                 self.make_sequences_aln_,
                 sequences=cluster_sequences,
                 muscle=self.muscle,
                 aln_path=seed_path
             ))
         # Get results
-        self.dask_client.gather(futures)
+        client.gather(futures)
 
         # Update timers
         time_end = time.time()

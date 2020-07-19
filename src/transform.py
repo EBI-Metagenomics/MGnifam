@@ -4,6 +4,9 @@ import numpy as np
 
 # Custom dependecies
 from src.msa import MSA
+from src.msa import consensus
+from src.msa import occupancy
+from src.msa import conservation
 
 
 class Transform(object):
@@ -170,14 +173,16 @@ class OccupancyTrim(Transform):
         # Get attributes
         threshold = self.threshold
         inclusive = self.inclusive
-        # Retrieve occupancy and consensus from MSA
-        occ, cns = MSA.occupancy(msa.aln)
+        # Compute consensus
+        cns = consensus(msa.aln)
+        # Compute occupancy
+        occ = occupancy(cns)
         # Check which values exceed the threshold
         pos = (occ >= threshold(occ)) if inclusive else (occ > threshold(occ))
         # Get indexes where values exceed the threshold
         pos = np.argwhere(pos == 1).flatten()
         # Get N- and C-terminal as first and last indexes, if any
-        i, j = pos[0], pos[-1]+1 if len(pos) else (0, 0)
+        i, j = (pos[0], pos[-1]+1) if len(pos) > 1 else (0, 0)
         # Return trimmed MSA
         return msa.trim(i, j)
 
@@ -204,8 +209,10 @@ class ConservationTrim(Transform):
         # Get attributes
         threshold = self.threshold
         inclusive = self.inclusive
-        # Retrieve occupancy and consensus from MSA
-        csv, cns = MSA.conservation(msa.aln)
+        # Compute consensus
+        cns = consensus(msa.aln)
+        # Compute conservation
+        csv = conservation(cns)
         # Check which values exceed the threshold
         pos = (csv >= threshold(csv)) if inclusive else (csv > threshold(csv))
         # Get indexes where values exceed the threshold
@@ -238,8 +245,10 @@ class OccupancyFilter(Transform):
         # Get attributes
         threshold = self.threshold
         inclusive = self.inclusive
-        # Retrieve occupancy and consensus from MSA
-        occ, cns = MSA.occupancy(msa.aln, axis=1)
+        # Compute consensus
+        cns = consensus(msa.aln, axis=1)
+        # Compute occupancy
+        occ = occupancy(cns)
         # Check which values exceed the threshold
         pos = (occ >= threshold(occ)) if inclusive else (occ > threshold(occ))
         # Get indexes where values exceed the threshold
@@ -248,85 +257,85 @@ class OccupancyFilter(Transform):
         return msa.slice(pos)
 
 
-class MakeNonRedundant(Transform):
-    """Make non redundant
-    Make sequence alignment non redundant up to a given threshold: checks
-    wether a bigger sequence contains a smaller, redundant sequence whose
-    redundancy score exceeds a given threshold and removes the samller one
-    in that case
-    """
-
-    def __init__(self, threshold=0.8, inclusive=True):
-        """Constructor
-
-        Args
-        threshold (float):  Redundancy threshold for determining wether a
-                            sequence must be kept or not
-        inclusive (bool):   Wether to include or not the threshold value when
-                            checking for redundancy
-        """
-        self.threshold = self.get_threshold(threshold)
-        self.inclusive = inclusive
-
-    def transform(self, msa):
-        """Make non redundant
-        Starts from longest sequences with highest mean redundancy, drop
-        sequences which have redundancy score exceeding the given threshold
-
-        Args
-        msa (msa.MSA):  Multiple sequence alignment
-
-        Return
-        msa (msa.MSA):  Transformed multiple sequence alignment
-        """
-        # Retrieve transformer attributes
-        threshold = self.threshold
-        inclusive = self.inclusive
-        # Compute redundancy matrix
-        red_mat = MSA.redundancy(msa.aln)
-        if inclusive:  # Apply redundancy threshold (inclusive)
-            red_mat = (red_mat >= threshold(red_mat))
-        else:  # Apply redundancy threshold (exclusive)
-            red_mat = (red_mat > threshold(red_mat))
-        # Get number of residues per sequence
-        num_res = np.sum((msa.aln != msa.gap), axis=1)
-        # Get set of sequence all indices available, sorted by length
-        seq_all = set(np.argsort(num_res).tolist())
-        # Initialize empty set of deleted (redundant) sequences
-        seq_del = set()
-        # Loop through all aligned sequences (column) from longest to smallest
-        for j in seq_all:
-            # Case current sequence has been previously discarded
-            if j in seq_del:
-                continue  # Skip iteration
-            # Get all sequences contained in current sequence
-            to_del = set(np.argwhere(red_mat[:, j]).flatten().tolist())
-            # Remove current sequence index
-            to_del = to_del - set([j])
-            # Add contained sequence indexes to set of discarded ones
-            seq_del = seq_del | to_del
-        # Slice input MSA according to remaining sequences indexes
-        return msa.slice(list(seq_all - seq_del))
+# class MakeNonRedundant(Transform):
+#     """Make non redundant
+#     Make sequence alignment non redundant up to a given threshold: checks
+#     wether a bigger sequence contains a smaller, redundant sequence whose
+#     redundancy score exceeds a given threshold and removes the samller one
+#     in that case
+#     """
+#
+#     def __init__(self, threshold=0.8, inclusive=True):
+#         """Constructor
+#
+#         Args
+#         threshold (float):  Redundancy threshold for determining wether a
+#                             sequence must be kept or not
+#         inclusive (bool):   Wether to include or not the threshold value when
+#                             checking for redundancy
+#         """
+#         self.threshold = self.get_threshold(threshold)
+#         self.inclusive = inclusive
+#
+#     def transform(self, msa):
+#         """Make non redundant
+#         Starts from longest sequences with highest mean redundancy, drop
+#         sequences which have redundancy score exceeding the given threshold
+#
+#         Args
+#         msa (msa.MSA):  Multiple sequence alignment
+#
+#         Return
+#         msa (msa.MSA):  Transformed multiple sequence alignment
+#         """
+#         # Retrieve transformer attributes
+#         threshold = self.threshold
+#         inclusive = self.inclusive
+#         # Compute redundancy matrix
+#         red_mat = MSA.redundancy(msa.aln)
+#         if inclusive:  # Apply redundancy threshold (inclusive)
+#             red_mat = (red_mat >= threshold(red_mat))
+#         else:  # Apply redundancy threshold (exclusive)
+#             red_mat = (red_mat > threshold(red_mat))
+#         # Get number of residues per sequence
+#         num_res = np.sum((msa.aln != msa.gap), axis=1)
+#         # Get set of sequence all indices available, sorted by length
+#         seq_all = set(np.argsort(num_res).tolist())
+#         # Initialize empty set of deleted (redundant) sequences
+#         seq_del = set()
+#         # Loop through all aligned sequences (column) from longest to smallest
+#         for j in seq_all:
+#             # Case current sequence has been previously discarded
+#             if j in seq_del:
+#                 continue  # Skip iteration
+#             # Get all sequences contained in current sequence
+#             to_del = set(np.argwhere(red_mat[:, j]).flatten().tolist())
+#             # Remove current sequence index
+#             to_del = to_del - set([j])
+#             # Add contained sequence indexes to set of discarded ones
+#             seq_del = seq_del | to_del
+#         # Slice input MSA according to remaining sequences indexes
+#         return msa.slice(list(seq_all - seq_del))
 
 
 # Test
 if __name__ == '__main__':
 
     # Define path to input seed
-    SEED_PATH = './data/MGYP001203360481/SEED'
+    SEED_PATH = './tmp/examples/MGYP000050665084/SEED'
 
     # Define transformation pipeline
     transform = Compose([
         # Exclude regions outside N- and C- terminal
         OccupancyTrim(threshold=0.4, inclusive=True),
         # Exclude sequences with less than half occupancy
-        OccupancyFilter(threshold=0.5, inclusive=True),
-        # Make non redundant with 80 percent threshold
-        MakeNonRedundant(threshold=0.8, inclusive=False)
+        OccupancyFilter(threshold=0.5, inclusive=True)
+        # # Make non redundant with 80 percent threshold
+        # MakeNonRedundant(threshold=0.8, inclusive=False)
     ])
 
     # Read test multiple sequence alignment
-    pre_trim = MSA().from_aln(SEED_PATH)
+    pre_trim = MSA.from_aln(SEED_PATH)
     # Debug
     print('Input multiple sequence alignment has shape', pre_trim.aln.shape)
 
@@ -383,7 +392,7 @@ if __name__ == '__main__':
     # Save to disk
     post_trim.to_aln(SEED_PATH + '_trimmed')
     # Reload from disk
-    post_trim = MSA().from_aln(SEED_PATH + '_trimmed')
+    post_trim = MSA.from_aln(SEED_PATH + '_trimmed')
 
     # Initialize new plot for comparing pre- transformation scores
     fig = plt.figure(constrained_layout=True, figsize=(20, 10))

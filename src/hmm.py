@@ -121,11 +121,7 @@ class HMMBuild(HMMER):
     alphabet = set(['amino', 'dna', 'rna'])
 
     # Constructor
-    def __init__(
-        self,
-        cmd=['/nfs/production/xfam/pfam/software/bin/hmmbuild'],
-        env=os.environ.copy()
-    ):
+    def __init__(self, cmd=['hmmbuild'], env=os.environ.copy()):
         # Call parent constructor
         super(HMMBuild, self).__init__(cmd=cmd, env=env)
 
@@ -174,17 +170,14 @@ class HMMBuild(HMMER):
 class HMMSearch(HMMER):
 
     # Constructor
-    def __init__(
-        self,
-        cmd=['/nfs/production/xfam/pfam/software/bin/hmmsearch'],
-        env=os.environ.copy()
-    ):
+    def __init__(self, cmd=['hmmsearch'], env=os.environ.copy()):
         # Call parent constructor
         super(HMMSearch, self).__init__(cmd=cmd, env=env)
 
     def run(
         self, hmm_path, target_path, out_path='/dev/null', num_cpus=None,
-        e=10.0, z=None, tblout_path='', domtblout_path='', pfamtblout_path=''
+        seq_e=1000, dom_e=None, seq_z=None, dom_z=None,
+        tblout_path='', domtblout_path='', pfamtblout_path=''
     ):
         """Run hmmsearch with some options
 
@@ -195,12 +188,15 @@ class HMMSearch(HMMER):
                                 searched
         out_path (str)          Path to output file
         num_cpus (int)          Number of cpus to be used in multithreading
-        e (float)               Maximum e-value threshold
-        z (int)                 Z value (length of the dataset) to be used
-                                in E-value computation
-        tblout (str)            Path to tabular per-sequence output
-        domtblout (str)         Path to tabular per-domain output
-        pfamtblout (str)        Path to pfam-formatted tabular output
+        seq_e (float)           Maximum e-value threshold for sequence match
+        dom_e (float)           Maximum e-value threshold for domain match
+        seq_z (int)             Z value (length of the dataset) to be used
+                                in sequences e-value calculation
+        dom_z (int)             Z value (length of the dataset) to be used
+                                in domains e-value calculation
+        tblout_path (str)       Path to tabular per-sequence output
+        domtblout_path (str)    Path to tabular per-domain output
+        pfamtblout_path (str)   Path to pfam-formatted tabular output
 
         Return
         (CompletedProcess)      Instance returned by subprocess.run(...) for a
@@ -208,6 +204,7 @@ class HMMSearch(HMMER):
 
         Raise
         (CalledProcessError)    Raised in case hmmbuild process fails
+        (Error)                 Unknown error
         """
         # Set hmmsearch executable
         cmd = [*self.cmd]
@@ -218,11 +215,14 @@ class HMMSearch(HMMER):
         # Set number of cpus used, if any
         cmd += ['--cpu', str(num_cpus)] if num_cpus else []
 
-        # Set E-value
-        cmd += ['-E', str(e)] if e is not None else []
-
-        # Set Z value
-        cmd += ['-Z', str(z)] if z is not None else []
+        # Set sequences e-value
+        cmd += ['-E', str(seq_e)] if seq_e is not None else []
+        # Set domains e-value
+        cmd += ['-domE', str(dom_e)] if dom_e is not None else []
+        # Set sequences Z value
+        cmd += ['-Z', str(seq_z)] if seq_z is not None else []
+        # Set domains Z value
+        cmd += ['-domZ', str(dom_z)] if dom_z is not None else []
 
         # Set tabular formats
         cmd += ['--tblout', tblout_path] if tblout_path else []
@@ -281,6 +281,7 @@ class HMMSearch(HMMER):
             return num_cpus
         # If flow reaches this point, no cpu can be allocated
         return 0
+
 
 # domtblout iterator
 def iter_domtblout(iterable):
@@ -350,13 +351,56 @@ def iter_domtblout(iterable):
             for j in range(len(bounds))
         ]
 
+
 # TODO tblout iterator
 def iter_tblout(iterable):
     raise NotImplementedError
 
+
 # TODO pfamtblout iterator
 def iter_pfamtblout(iterable):
     raise NotImplementedError
+
+
+class HMMAlign(HMMER):
+
+    # Constructor
+    def __init__(self, cmd=['hmmalign'], env=os.env.copy()):
+        # Call parent constructor
+        super().__init__(cmd=cmd, env=env)
+
+    # Run HMM align
+    def run(self, hmm_path, fasta_path, out_path='/dev/stdout'):
+        """Align an HMM model with a FASTA dataset
+
+        Args
+        hmm_path (str)          Path to HMM model file
+        fasta_path (str)        Path to FASTA target sequences file
+        out_path (str)          Path where to store output alignment file
+
+        Return
+        (CompletedProcess)      Result object representing a successful run
+
+        Raise
+        (CalledProcessError)    Error related to command line input
+        (Error)                 Unknown error
+        """
+        # Define command
+        cmd = [self.cmd]
+        # Set mandatory command line options
+        cmd += [hmm_path]  # HMM model file path
+        cms += [fasta_path]   # Target dataset file path
+        cmd += ['>', out_path]  # Output file path
+
+        # Execute script
+        return subprocess.run(
+            capture_output=True,  # Capture console output
+            check=True,  # Check that script ran successfully
+            encoding='utf-8',  # Set output encoding
+            env=self.env,  # Set script environment
+            args=cmd  # Set command line arguments
+        )
+
 
 
 # Unit testing

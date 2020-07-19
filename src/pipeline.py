@@ -105,6 +105,8 @@ class Release(Pipeline):
     def __init__(self, *args, **kwargs):
         raise NotImplementedError
 
+    def run(self, )
+
 
 class Seed(Pipeline):
 

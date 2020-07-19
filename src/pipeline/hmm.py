@@ -1,6 +1,6 @@
 # Dependencies
 from tempfile import NamedTemporaryFile
-import time
+from time import time
 import sys
 import os
 
@@ -15,18 +15,17 @@ from src.dataset import Fasta
 class HMMPipeline(Pipeline):
 
     def __init__(
-        self, cluster_type, cluster_kwargs,
-        # hmmbuild parameters
-        hmm_build_env=os.environ.copy(), hmm_build_cmd=['hmmbuild'],
-        # hmmsearch parameters
-        hmm_search_env=os.environ.copy(), hmm_search_cmd=['hmmsearch']
+        self, cluster_type, cluster_kwargs, env=os.environ.copy(),
+        hmm_build_cmd=['hmmbuild'], hmm_search_cmd=['hmmsearch']
     ):
         # Call parent constructor
         super().__init__(cluster_type, cluster_kwargs)
+        # Save environmental variables
+        self.env = env
         # Initialize a new hmmbuild instance
-        self.hmm_build = HMMBuild()
+        self.hmm_build = HMMBuild(cmd=hmm_build_cmd, env=self.env)
         # Initialize a new hmmsearch instance
-        self.hmm_search = HMMSearch()
+        self.hmm_search = HMMSearch(cmd=hmm_search_cmd, env=self.env)
 
     def run(
         self, cluster_names, clusters_dir, target_path, e_value=0.01, z_score=None,
@@ -51,8 +50,18 @@ class HMMPipeline(Pipeline):
         verbose (bool)              Wether to print out verbose logs or not
         """
 
-        # # Define new log
-        # log = Log(log_path=os.path.join(clusters_dir, 'pfbuild.json'))
+        # Intialize timer
+        tot_time = time()
+        # Define new log
+        log = Log(log_path=log_path, log_dict={
+            'tot_time': 0.0,
+            'num_clusters': len(cluster_names),
+            'target_path': target_path,
+            'e_value': e_value,
+            'z_score': z_score,
+            'build_time': 0.0,
+            'search_time':0.0
+        })
 
         # Instantiate new client for running HMMBuild
         client = self.get_client({'cores': 1, 'memory': '2 GB'})
@@ -63,7 +72,7 @@ class HMMPipeline(Pipeline):
         target_paths = get_paths(target_path)
         # Case z score is not set
         if not z_score:
-            # Getfasta datasets
+            # Get fasta datasets
             fasta = Fasta.from_list(target_paths)
             # Get each chunk size
             futures = client.map(len, fasta)
@@ -72,6 +81,8 @@ class HMMPipeline(Pipeline):
             # Compute z score
             z_score = sum(results)
 
+        # Initialize build time
+        build_time = time()
         # Make HMMs
         self.build_hmms(
             cluster_names=cluster_names,
@@ -81,6 +92,8 @@ class HMMPipeline(Pipeline):
         )
         # Close client
         client.shutdown()
+        # Update log
+        log({'build_time': round(time() - build_time, 2)})
 
         # Initialize number of cores
         max_cores = self.cluster_kwargs.get('cores', 1)
@@ -132,6 +145,8 @@ class HMMPipeline(Pipeline):
             # Add current model to library
             hmm_lib_path.append(hmm_path)
 
+        # Initialize build time
+        search_time = time()
         # Instantiate new client for running
         client = self.get_client({'cores': max_cores})
         # Require some jobs
@@ -140,6 +155,15 @@ class HMMPipeline(Pipeline):
         self.search_hmms(hmm_lib_path, target_paths, e_value, z_score, client, cores=max_cores, verbose=verbose)
         # Close client
         client.shutdown()
+        # Update log
+        log({'search_time': round(time() - search_time, 2)})
+
+        # Get final time
+        time_end = time()
+        # Update log
+        log({'tot_time': round(time_end - time_beg, 2)})
+        # Return log
+        return log
 
     # Create Hidden Markov Models (HMMs)
     def build_hmms(self, cluster_names, clusters_dir, client, verbose=False):
@@ -232,9 +256,9 @@ class HMMPipeline(Pipeline):
             # Define number of CPUs allocated
             num_cpus=num_cpus,
             # Set e-value
-            e=e_value,
+            dom_e=e_value,
             # Set z-score
-            z=z_score
+            dom_z=z_score
         )
 
         # Initialize domtblout

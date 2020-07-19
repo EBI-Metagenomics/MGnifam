@@ -147,9 +147,21 @@ class Bjob(object):
         Return
         (str):              Job id, as string (avoids cutting leading zeroes)
         """
-        # Retrieve job id
-        job_id = str(re.search(r'^Job \<([\d]+)\>', in_string).group(1))
-        # # Debug
-        # print('Retrieved job id: {}'.format(job_id))
+        # Initialize job id
+        job_id = None
+        # Split string according to newline
+        in_list = in_string.split('\n')
+        # Loop through each line
+        for i in range(len(in_list)):
+            # Case string matches job id
+            match_id = re.search(r'^Job \<(\d+)\>', in_list[i])
+            # Case there is a match
+            if match_id:
+                # Retrieve job id
+                job_id = str(match_id.group(1))
+                # Exit loop
+                break
+        # Debug
+        print('Retrieved job id string: {}'.format(in_string))
         # Return retrieved job id
         return job_id

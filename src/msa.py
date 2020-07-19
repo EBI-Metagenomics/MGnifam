@@ -147,6 +147,10 @@ class MSA(object):
 
     # Print out alignment to fasta file
     def to_aln(self, out_path):
+        # Case alignment is empty
+        if self.is_empty():
+            # Do not output file
+            return self
         # Get description
         desc = np.array([
             # Set descriptio line
@@ -220,28 +224,34 @@ class MSA(object):
         n, m = self.aln.shape
         # Initialize the alignment matrix
         aln = self.aln
-        # Get colouring
+        # Case scoring is according to gaps
         if score == 'gap':  # Default: search for gaps
             # Make new alignment matrix
             aln = (aln != self.gap)
             # Set default color map
             cmap = 'binary_r' if cmap is None else cmap
-        elif score == 'occupancy':  # Color columns wrt occupancy
-            # Compute occupancy
-            occupancy, _ = MSA.occupancy(aln)
-            # Make new alignment matrix
-            aln = np.tile(occupancy, (n, 1))
+        # Otherwise
+        else:
+            # Compute consensus
+            cns = consensus(aln)
+            # Color columns according to occupancy
+            if score == 'occupancy':
+                # Compute occupancy
+                occ = occupancy(cns)
+                # Make new alignment matrix
+                aln = np.tile(occ, (n, 1))
+                # Set default color map
+                cmap = 'viridis' if cmap is None else cmap
+             # Color columns according to consrevation
+            elif score == 'conservation':
+                # Compute conservation
+                csv = conservation(cns)
+                # Make new alignment matrix
+                aln = np.tile(csv, (n, 1))
+            else:  # Case color is not valid
+                raise NotImplementedError('Scoring method is not defined!')
             # Set default color map
             cmap = 'viridis' if cmap is None else cmap
-        elif score == 'conservation':  # Color columns wrt consrevation
-            # Compute conservation
-            conservation, _ = MSA.conservation(aln)
-            # Make new alignment matrix
-            aln = np.tile(conservation, (n, 1))
-            # Set default color map
-            cmap = 'viridis' if cmap is None else cmap
-        else:  # Case color is not valid
-            raise NotImplementedError('Scoring method is not defined!')
         # Plot image
         im = ax.imshow(aln, cmap=cmap)
         # Add colorbar
@@ -273,13 +283,15 @@ class MSA(object):
         n, m = self.aln.shape
         # Define x axis (alignment positions)
         x = np.arange(0, m)
+        # Compute consensus
+        cns = consensus(self.aln)
         # Define y axis according to chosen score
         if score == 'occupancy':
             # Compute score as occupancy
-            y, _ = MSA.occupancy(self.aln)
+            y = occupancy(cns)
         elif score == 'conservation':
             # Compute score as conservation
-            y, _ = MSA.conservation(self.aln)
+            y = conservation(cns)
         else:  # Case no valid score
             raise NotImplementedError('Scoring method is not defined!')
         # Make scatterplot
@@ -295,13 +307,15 @@ class MSA(object):
     def plot_hist(self, ax, score='occupancy', bins=100, density=True, **kwargs):
         # Get msa shape (n rows, m positions/columns)
         n, m = self.aln.shape
+        # Compute consensus
+        cns = consensus(self.aln)
         # Define y axis according to chosen score
         if score == 'occupancy':
-            # Compute score as occupancy
-            y, _ = MSA.occupancy(self.aln)
+            # Compute occupancy score
+            y = occupancy(cns)
         elif score == 'conservation':
-            # Compute score as conservation
-            y, _ = MSA.conservation(self.aln)
+            # Compute conservation score
+            y = conservation(cns)
         else:  # Case no valid score
             raise NotImplementedError('Scoring method is not defined!')
         # Make scatterplot
@@ -552,7 +566,7 @@ class Muscle(object):
 if __name__ == '__main__':
 
     # Read multiple sequence alignment
-    msa = MSA().from_aln('data/MGYP001224746368/SEED')
+    msa = MSA.from_aln('tmp/examples/MGYP000050665084/SEED')
     # Check number of aligned sequences
     print('There are %d aligned sequences with %d columns' % msa.aln.shape)
     # Check first 5 rows
@@ -577,27 +591,29 @@ if __name__ == '__main__':
     #     # Print encoded subsequence
     #     print(ohe[i, 100:105, :])
 
+    # Compute consensus
+    cns = consensus(msa.aln)
     # Compute occupancy score
-    occupancy, consensus = MSA.occupancy(msa.aln)
+    occ = occupancy(cns)
     # Compute conservation score
-    conservation, consensus = MSA.conservation(msa.aln)
+    csv = conservation(cns)
     # Check results
     print('Input alignment has shape {}'.format(msa.aln.shape))
-    print('Occupancy scores has shape {}'.format(occupancy.shape))
-    print('Conservation scores has shape {}'.format(conservation.shape))
+    print('Occupancy scores has shape {}'.format(occ.shape))
+    print('Conservation scores has shape {}'.format(csv.shape))
     # Initialize table of results
     print('Column\tBest residue\t\tConservation\tOccupancy')
     # Results (consensus is a matrix with shape m positions x 20 amino acids)
-    for j in range(0, min(consensus.shape[0], 100)):
+    for j in range(0, min(cns.shape[0], 100)):
         # Get index of amino acid with best consensus
-        i = np.argmax(consensus[j, :-1])
+        i = np.argmax(cns[j, :-1])
         # Get best results for this column
         print('{:d}\t{:s} (freq={:.03f})\t\t{:.03f}\t\t{:.03f}'.format(
             j+1,  # Current position/column in msa
             MSA.res[i],  # Amino acid with highest frequency
-            consensus[j, i],  # Highest frequency
-            conservation[j],  # Conservation
-            occupancy[j]  # Occupancy
+            cns[j, i],  # Highest frequency
+            csv[j],  # Conservation
+            occ[j]  # Occupancy
         ))
 
     # Make complete trimming (keep none)
@@ -614,23 +630,23 @@ if __name__ == '__main__':
             trimmed.end[i]  # Sequence end
         ))
 
-    # Make redundancy matrix
-    redundancy = MSA.redundancy(msa.aln)
-    # Test redundancy
-    print('Input alignment has shape {}'.format(msa.aln.shape))
-    print('Redundacny matrix has shape {}'.format(redundancy.shape))
-    print(redundancy)
+    # # Make redundancy matrix
+    # redundancy = MSA.redundancy(msa.aln)
+    # # Test redundancy
+    # print('Input alignment has shape {}'.format(msa.aln.shape))
+    # print('Redundacny matrix has shape {}'.format(redundancy.shape))
+    # print(redundancy)
 
     # Plot alignment as heatmap
     fig, ax = plt.subplots(1, 1, figsize=(30, 15))
     _ = ax.set_title('Multiple Sequence Alignment')
-    _ = msa.plot_heatmap(score='conservation', ax=ax)
+    _ = msa.plot_heatmap(score='occupancy', ax=ax)
     _ = plt.show()
 
     # Plot alignment as scatterplot
     fig, ax = plt.subplots(1, 1, figsize=(30, 15))
     _ = ax.set_title('Multiple Sequence Alignment score')
-    _ = msa.plot_scatter(score='conservation', ax=ax)
+    _ = msa.plot_scatter(score='occupancy', ax=ax)
     _ = plt.show()
 
     # Define multiple sequence alignment input test sequences
