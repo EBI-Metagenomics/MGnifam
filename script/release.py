@@ -6,7 +6,6 @@ import numpy as np
 import subprocess
 import argparse
 import shutil
-import glob
 import json
 import sys
 import os
@@ -60,69 +59,69 @@ class Release(Pipeline):
             'tot_time': 0.0
         })
 
-        # Define batches iterator
-        batch_iter = self.iter_clusters(clusters_paths, batch_size=batch_size, max_clusters=max_clusters)
-        # Loop through each batch
-        for batch_index, cluster_names in batch_iter:
-            # Define batch directory path
-            batch_path = path.join(out_dir, 'batch_{:d}'.format(batch_index))
-            # Run batch clusters maker
-            self.run_batch(
-                cluster_names=cluster_names,  # List of cluster names
-                batch_path=batch_path  # Clusters output directory
-            )
-
+        # # Define batches iterator
+        # batch_iter = self.iter_clusters(clusters_paths, batch_size=batch_size, max_clusters=max_clusters)
+        # # Loop through each batch
+        # for batch_index, cluster_names in batch_iter:
+        #     # Define batch directory path
+        #     batch_path = path.join(out_dir, 'batch_{:d}'.format(batch_index))
+        #     # Run batch clusters maker
+        #     self.run_batch(
+        #         cluster_names=cluster_names,  # List of cluster names
+        #         batch_path=batch_path  # Clusters output directory
+        #     )
+        #
         # Define build directory
         build_path = path.join(out_dir, 'build')
-        # Make build directory
-        mkdir(build_path)
-
-        # Reset paths to clusters
-        clusters_paths = list()
-        # Copy all clusters kept in batch directories to build directories
-        for cluster_batch_path in iglob(path.join(out_dir, 'batch*', 'MGYP*')):
-            # Get cluster name
-            cluster_name = path.basename(cluster_batch_path)
-            # Define new cluster path
-            cluster_build_path = path.join(build_path, cluster_name)
-            # Copy from batch path to build path
-            shutil.copytree(cluster_batch_path, cluster_build_path)
-            # Save cluster build path to
-            clusters_paths.append(cluster_build_path)
-
-        # Define SEED multiple sequence alignments transformations
-        transform = Compose([
-            # Exclude regions outside N- and C- terminal
-            OccupancyTrim(threshold=0.4, inclusive=True),
-            # Exclude sequences with less than half occupancy
-            OccupancyFilter(threshold=0.5, inclusive=True)
-        ])
-
-        # Intialize path for discarded clusters
-        noaln_path = os.path.join(build_path, 'NOALN')
-        # Make directory
-        mkdir(noaln_path)
-        # Loop through each SEED alignment
-        for cluster_path in clusters_paths:
-            # Trim cluster's SEED alignment
-            self.trim_seed(
-                cluster_path=cluster_path,
-                noaln_path=noaln_path,
-                transform=transform
-            )
-
-        # Run HMMs against UniProt
-        _, took_time = benchmark(fn=Bjob.check, delay=self.delay, bjobs=list(map(
-            # Mapped function
-            lambda cluster_path: self.pfbuild(cluster_path),
-            # Input values
-            clusters_paths
-        )))
-        # Store execution time
-        log({'pfbuild_time': round(took_time, 2)})
-
-        # Check uniprot overlappings in build path
-        self.check_uniprot(build_path)
+        # # Make build directory
+        # mkdir(build_path)
+        #
+        # # Reset paths to clusters
+        # clusters_paths = list()
+        # # Copy all clusters kept in batch directories to build directories
+        # for cluster_batch_path in iglob(path.join(out_dir, 'batch*', 'MGYP*')):
+        #     # Get cluster name
+        #     cluster_name = path.basename(cluster_batch_path)
+        #     # Define new cluster path
+        #     cluster_build_path = path.join(build_path, cluster_name)
+        #     # Copy from batch path to build path
+        #     shutil.copytree(cluster_batch_path, cluster_build_path)
+        #     # Save cluster build path to
+        #     clusters_paths.append(cluster_build_path)
+        #
+        # # Define SEED multiple sequence alignments transformations
+        # transform = Compose([
+        #     # Exclude regions outside N- and C- terminal
+        #     OccupancyTrim(threshold=0.4, inclusive=True),
+        #     # Exclude sequences with less than half occupancy
+        #     OccupancyFilter(threshold=0.5, inclusive=True)
+        # ])
+        #
+        # # Intialize path for discarded clusters
+        # noaln_path = os.path.join(build_path, 'NOALN')
+        # # Make directory
+        # mkdir(noaln_path)
+        # # Loop through each SEED alignment
+        # for cluster_path in clusters_paths:
+        #     # Trim cluster's SEED alignment
+        #     self.trim_seed(
+        #         cluster_path=cluster_path,
+        #         noaln_path=noaln_path,
+        #         transform=transform
+        #     )
+        #
+        # # Run HMMs against UniProt
+        # _, took_time = benchmark(fn=Bjob.check, delay=self.delay, bjobs=list(map(
+        #     # Mapped function
+        #     lambda cluster_path: self.pfbuild(cluster_path),
+        #     # Input values
+        #     clusters_paths
+        # )))
+        # # Store execution time
+        # log({'pfbuild_time': round(took_time, 2)})
+        #
+        # # Check uniprot overlappings in build path
+        # self.check_uniprot(build_path)
 
         # Reset paths to clusters
         clusters_paths = glob(path.join(build_path, 'MGYP*'))
@@ -315,7 +314,7 @@ class Release(Pipeline):
     # Run pfbuild with mfbuild parameters as default
     def mfbuild(self, cluster_path, db='mgnify', withpfmake=True, make_eval=0.01):
         # Just pass parameters to pfbuild script
-        return self.pfbuild(*args, **kwargs)
+        return self.pfbuild(cluster_path=cluster_path, db=db, withpfmake=withpfmake, make_eval=make_eval)
 
     # Run check_uniprot.pl
     def check_uniprot(self, clusters_dir):

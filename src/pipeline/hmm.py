@@ -72,6 +72,8 @@ class HMMPipeline(Pipeline):
         target_paths = get_paths(target_path)
         # Case z score is not set
         if not z_score:
+            # Initialize timer
+            z_time = time()
             # Get fasta datasets
             fasta = Fasta.from_list(target_paths)
             # Get each chunk size
@@ -80,6 +82,11 @@ class HMMPipeline(Pipeline):
             results = client.gather(futures)
             # Compute z score
             z_score = sum(results)
+            # Update log
+            log({
+                'z_time': time() - z_time,
+                'z_score': z_score
+            })
 
         # Initialize build time
         build_time = time()
@@ -151,25 +158,43 @@ class HMMPipeline(Pipeline):
         client = self.get_client({'cores': max_cores})
         # Require some jobs
         client.cluster.adapt(minimum=min_jobs, maximum=max_jobs)
-        # Run hmmsearch
-        self.search_hmms(hmm_lib_path, target_paths, e_value, z_score, client, cores=max_cores, verbose=verbose)
+        # Run hmmsearch, retrieve clusters which match sequences in dataset
+        matching_clusters = self.search_hmms(
+            hmm_paths=hmm_lib_path,
+            target_paths=target_paths,
+            e_value=e_value,
+            z_score=z_score,
+            client=client,
+            cores=max_cores,
+            verbose=verbose
+        )
         # Close client
         client.shutdown()
         # Update log
         log({'search_time': round(time() - search_time, 2)})
 
-        # Get final time
-        time_end = time()
+        # Define path to Uniprot directory
+        uniprot_path = os.path.join(clusters_dir, 'Uniprot')
+        # Make directory
+        os.mkdir(uniprot_path)
+        # Loop through every cluster matching target dataset
+        for cluster_name in matching_clusters:
+            # Define cluster path
+            cluster_path = os.path.join(clusters_dir, cluster_name)
+            # Case cluster path does not exist
+            if not os.path.exists(cluster_path):
+                continue  # Skip it
+            # Otherwise, move it to Uniprot folder
+            shutil.move(cluster_path, os.path.join(uniprot_path, cluster_name))
+
         # Update log
-        log({'tot_time': round(time_end - time_beg, 2)})
-        # Return log
-        return log
+        log({'tot_time': round(time() - tot_time, 2)})
 
     # Create Hidden Markov Models (HMMs)
     def build_hmms(self, cluster_names, clusters_dir, client, verbose=False):
 
         # Initialize timers
-        time_beg, time_end = time.time(), None
+        time_beg, time_end = time(), None
         # Verbose log
         if verbose:
             print('Building Hidden Markov Models (HMMs) for {:d} clusters...'.format(
@@ -200,7 +225,7 @@ class HMMPipeline(Pipeline):
         client.gather(futures, 'raise')
 
         # Update timers
-        time_end = time.time()
+        time_end = time()
         # Verbose log
         if verbose:
             print('Took {:.0f} seconds to build {:d} Hidden Markov Models (HMMs)'.format(
@@ -300,28 +325,36 @@ class HMMPipeline(Pipeline):
                                     to belonging cluster) which have at least a
                                     significan match with target dataset
         """
+        # Try to run distributed search
+        try:
 
-        # Initialize futures container
-        futures = list()
-        # Loop through each dataset in <against_ds> list
-        for i in range(len(target_paths)):
-            # Define current target path
-            target_path = target_paths[i]
-            # Distribute HMM search against target dataset
-            futures.append(client.submit(
-                # Function to submit
-                self.search_hmms_,
-                # Function parameters
-                hmm_search=self.hmm_search,  # HMMSearch object
-                hmm_paths=hmm_paths,  # Target HMM library
-                target_path=target_path,  # Target dataset paths
-                num_cpus=cores,  # Number of CPUs allocated
-                e_value=e_value,  # E-value threshold
-                z_score=z_score  # Dataset size
-            ))
+            # Initialize futures container
+            futures = list()
+            # Loop through each dataset in <against_ds> list
+            for i in range(len(target_paths)):
+                # Define current target path
+                target_path = target_paths[i]
+                # Distribute HMM search against target dataset
+                futures.append(client.submit(
+                    # Function to submit
+                    self.search_hmms_,
+                    # Function parameters
+                    hmm_search=self.hmm_search,  # HMMSearch object
+                    hmm_paths=hmm_paths,  # Target HMM library
+                    target_path=target_path,  # Target dataset paths
+                    num_cpus=cores,  # Number of CPUs allocated
+                    e_value=e_value,  # E-value threshold
+                    z_score=z_score  # Dataset size
+                ))
 
-        # Retrieve results
-        results = client.gather(futures, 'raise')
+            # Retrieve results
+            results = client.gather(futures, 'raise')
+
+        # Intercept command line error
+        except CalledProcessError as err:
+            # Raise new error
+            raise Exception(err.stderr)
+
         # Define set of matching HMMs
         hmm_matches = set()
         # Loop through each computation result

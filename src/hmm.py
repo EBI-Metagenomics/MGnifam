@@ -218,11 +218,11 @@ class HMMSearch(HMMER):
         # Set sequences e-value
         cmd += ['-E', str(seq_e)] if seq_e is not None else []
         # Set domains e-value
-        cmd += ['-domE', str(dom_e)] if dom_e is not None else []
+        cmd += ['--domE', str(dom_e)] if dom_e is not None else []
         # Set sequences Z value
         cmd += ['-Z', str(seq_z)] if seq_z is not None else []
         # Set domains Z value
-        cmd += ['-domZ', str(dom_z)] if dom_z is not None else []
+        cmd += ['--domZ', str(dom_z)] if dom_z is not None else []
 
         # Set tabular formats
         cmd += ['--tblout', tblout_path] if tblout_path else []
@@ -365,7 +365,7 @@ def iter_pfamtblout(iterable):
 class HMMAlign(HMMER):
 
     # Constructor
-    def __init__(self, cmd=['hmmalign'], env=os.env.copy()):
+    def __init__(self, cmd=['hmmalign'], env=os.environ.copy()):
         # Call parent constructor
         super().__init__(cmd=cmd, env=env)
 
