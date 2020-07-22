@@ -268,7 +268,7 @@ class HMMSearch(HMMER):
         (int)                   Number of cpus needed (0 if allocated resources
                                 are not fitting computational ones)
         """
-        # Compute number of Gb required by a single core
+        # Compute number of B required by a single core
         req_memory = math.ceil(model_len * longest_seq * num_bytes)
         # Loop from maximum number of CPUS to minimum (1)
         for num_cpus in range(max_cpus, 0, -1):

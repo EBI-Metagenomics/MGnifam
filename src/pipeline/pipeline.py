@@ -15,7 +15,7 @@ class Log(object):
         self.log_dict = log_dict
         self.log_path = log_path
 
-    # Handle squared brackets
+    # Override squared brackets
     def __getitem__(self, key):
         # Define underlying dictionary keys
         keys = set(self.log_dict.keys())
@@ -25,6 +25,11 @@ class Log(object):
             raise KeyError('Key not found in underlying log dictionary')
         # Return key in log dictionary
         return self.log_dict[key]
+
+    # Override squared brackets
+    def __setitem__(self, key, item):
+        # Set item in inner log dictionary
+        self.log_dict[key] = item
 
     # Handle attribute not found: search in log dict
     def __getattr__(self, key):
@@ -56,19 +61,15 @@ class Log(object):
 class Pipeline(object):
 
     # Constructor
-    def __init__(self, cluster_type, cluster_kwargs):
+    def __init__(self, cluster_type, cluster_params=dict()):
         # Store dask arguments
         self.cluster_type = cluster_type
-        self.cluster_kwargs = cluster_kwargs
+        self.cluster_params = cluster_params
 
     # Make Dask cluster
-    def get_cluster(self, cluster_kwargs={}):
-        # print('DEBUG')
-        # print(self.cluster_type)
-        # print(self.cluster_kwargs)
-        # print(cluster_kwargs)
+    def get_cluster(self, cluster_params=dict()):
         # Update default cluster kwargs
-        cluster_kwargs = {**self.cluster_kwargs, **cluster_kwargs}
+        cluster_params = {**self.params, **cluster_params}
         # Make new cluster
         return self.cluster_type(**cluster_kwargs)
 
@@ -76,11 +77,6 @@ class Pipeline(object):
     def get_client(self, *args, **kwargs):
         # Return client containing cluster
         return Client(self.get_cluster(*args, **kwargs))
-
-    # # Set Dask client
-    # def set_client(self, *args, **kwargs):
-    #     # Set client to new client
-    #     self.client = self.get_client(*args, **kwargs)
 
     # Wrapper for run method
     def __call__(self, *args, **kwargs):

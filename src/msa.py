@@ -340,92 +340,6 @@ class MSA(object):
         # Return encoded matrix as integer matrix
         return encoded.astype(np.int)
 
-    # @classmethod
-    # def consensus(cls, x, axis=0):
-    #     # Get one hot encoded matrix (copy, include gaps)
-    #     x = cls.one_hot_encode(x, include_gap=True)
-    #     # Get shapes (n rows, m columns, k features)
-    #     n, m, k = x.shape
-    #     # Define consensus matrix (m alignment columns x 20 residues)
-    #     freqs = np.sum(x, axis=axis) / x.shape[axis]
-    #     # Return consensus matrix
-    #     return freqs
-    #
-    # @classmethod
-    # def occupancy(cls, x, axis=0):
-    #     """
-    #     x:      numpy matrix (n rows, m columns) on which occupancy must be
-    #             computed as the sum of occupied cells over all the occupied
-    #             positions. A cell is occupied when symbol is not gap (-);
-    #     """
-    #     # Define consensus matrix (m alignment columns x 20 residues)
-    #     freqs = cls.consensus(x, axis=axis)
-    #     # Define occupancy array (sum all consensus without gaps)
-    #     avg = np.sum(freqs[:, :-1], axis=1)
-    #     # Return either occupancy and consensus
-    #     return avg, freqs
-    #
-    # @classmethod
-    # def conservation(cls, x, axis=0):
-    #     """
-    #     x:      numpy matrix (n-dimensional) on which conservation is computed,
-    #             as the shannon entropy of each considered cell;
-    #     base:   logarithm base used in Shannon entropy computation;
-    #     """
-    #     # Define consensus matrix (m alignment columns x 20 residues)
-    #     freqs = cls.consensus(x, axis=axis)
-    #     # Compute shannon entropy
-    #     entropy = np.nansum(-(freqs[:, :-1] * np.log(freqs[:, :-1])), axis=1)
-    #     # Return entropy for every column
-    #     return entropy, freqs
-    #
-    # @classmethod
-    # def prettiness(cls, x):
-    #     """
-    #     Prettiness score is the mean conservation multiplied over the minimum
-    #     between number of rows and number of columns.
-    #
-    #     Args:
-    #     x:          numpy matrix (n rows, m columns)
-    #
-    #     Return:
-    #     (float):    prettiness score
-    #     """
-    #     # Get alignment shape as n rows and m columns
-    #     n, m = x.shape
-    #     # Compute conservation
-    #     csv, _ = cls.conservation(x)
-    #     # Return prettiness
-    #     return np.mean(csv) * min(n, m)
-    #
-    # @classmethod
-    # def redundancy(cls, x):
-    #     """
-    #     Computes redundancy among each pair of sequence in multiple sequence
-    #     alignment, i.e. the number of total equal rediues with respect to
-    #     the total number of (non-gap) residues
-    #     """
-    #     # Get shape of input alignment matrix (n rows, m columns)
-    #     n, m = x.shape
-    #     # Make a new matrix with shape n x n
-    #     redundancy = np.identity(n, dtype=np.float)
-    #     # Loop through each row in redundancy matrix
-    #     for i in range(0, n):
-    #         # Loop through each column in redundancy matrix
-    #         for j in range(i+1, n):
-    #             # Non-gap residues in i-th sequence
-    #             seq_i = (x[i, :] != cls.gap).astype(np.int)
-    #             # Non-gap residues in j-th sequence
-    #             seq_j = (x[j, :] != cls.gap).astype(np.int)
-    #             # Non-gap and equal residues among i-th and j-th sequence
-    #             seq_i_j = seq_i * seq_j * (x[i, :] == x[j, :]).astype(np.int)
-    #             # Equal residues wrt number of residues in i-th seqeunce
-    #             redundancy[i, j] = np.sum(seq_i_j) / np.sum(seq_i)
-    #             # Equal residues wrt number of residues in j-th seqeunce
-    #             redundancy[j, i] = np.sum(seq_i_j) / np.sum(seq_j)
-    #     # Return redundancy matrix
-    #     return redundancy
-
 
 # Compute consensus
 def consensus(x, axis=0):
@@ -491,6 +405,42 @@ def prettiness(x, n, m):
     """
     # Return prettiness
     return np.mean(x) * min(n, m)
+
+
+# Compute redundancy
+def redundancy(x):
+    """Compute pairwise redundancy
+
+    Compute pairwise redundancy among each pair of sequences in multiple
+    sequence alignment, i.e. the number of total equal rediues with respect to
+    the total number of (non-gap) residues.
+
+    Args
+    x (np.ndarray)      2D matrix representing multiple sequence alignment
+
+    Return
+    (np.array)          Squared matrix containing pairwise redundancy scores
+    """
+    # Get shape of input alignment matrix (n rows, m columns)
+    n, m = x.shape
+    # Make a new matrix with shape n x n
+    redundancy = np.identity(n, dtype=np.float)
+    # Loop through each row in redundancy matrix
+    for i in range(0, n):
+        # Loop through each column in redundancy matrix
+        for j in range(i+1, n):
+            # Non-gap residues in i-th sequence
+            seq_i = (x[i, :] != MSA.gap).astype(np.int)
+            # Non-gap residues in j-th sequence
+            seq_j = (x[j, :] != MSA.gap).astype(np.int)
+            # Non-gap and equal residues among i-th and j-th sequence
+            seq_i_j = seq_i * seq_j * (x[i, :] == x[j, :]).astype(np.int)
+            # Equal residues wrt number of residues in i-th seqeunce
+            redundancy[i, j] = np.sum(seq_i_j) / np.sum(seq_i)
+            # Equal residues wrt number of residues in j-th seqeunce
+            redundancy[j, i] = np.sum(seq_i_j) / np.sum(seq_j)
+    # Return redundancy matrix
+    return redundancy
 
 
 class Muscle(object):
