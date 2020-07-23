@@ -302,12 +302,16 @@ import re
 class ReleasePipeline(Pipeline):
     """ Make new MGnifam release
 
-    This pipeline puts together two pipelines: first it runs the BATCH pipeline,
-    which makes SEED alignments out of MGnifam dataset, applies a threshold
-    over compositional bias, applies automatic SEED trimming, makes HMM models
-    and finally checks them against UniProt to ensure there is no itersection.
+    This pipeline puts together three pipelines: first, if required, it creates
+    the input dataset such that distributed cluster features can be exploited
+    at the best (casically chunking the input datasets).
 
-    Then, it runs the BUILD pipeline, which builds the actual MGnifam entry, by
+    Then it runs the BATCH pipeline, which makes SEED alignments out of MGnifam
+    dataset, applies a threshold over compositional bias, applies automatic SEED
+    trimming, makes HMM models and finally checks them against UniProt to ensure
+    there is no itersection.
+
+    Next, it runs the BUILD pipeline, which builds the actual MGnifam entry, by
     retrieving sequences from MGnifam and aligning them (through hmmalign) to
     form the new entry alignment, finally providing annotations and database
     management in order to put MGnifam entries in place.
@@ -316,12 +320,23 @@ class ReleasePipeline(Pipeline):
     # Constructor
     def __init__(
         # Pipeline parameters, required to handle job scheduling
-        self, cluster_type, cluster_kwargs=,
+        self, cluster_type, cluster_kwargs,
         # Path to datasets (fixed)
         linclust_path, mgnifam_path, uniprot_path,
-        # compositional bias threshold settings
+        # Wether to reformat input dataset
+        make_linclust=False, make_mgnifam=False, make_uniprot=False,
+        # Compositional bias threshold settings
         comp_bias_threshold=0.2, comp_bias_inclusive=True,
-        # Automatic trimming 
+        # Automatic trimming settings
+        auto_trim_threshold=0.4, auto_trim_inclusive=True,
+        auto_filter_thresold=0.5, auto_filter_inclsive=True,
+        # Post trimming settings
+        seed_min_width=1, seed_min_height=1,
+        # Search against UniProt settings
+        uniprot_e_value=0.01, uniprot_z_score=None,
+        # Search against MGnifam settings
+        mgnifam_e_value=0.01, mgnifam_z_score=None,
         # Environmental variables
         env=os.environ.copy()
-    )
+    ):
+        raise NotImplementedError

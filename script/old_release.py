@@ -772,7 +772,7 @@ class OldRelease(Pipeline):
             # Define cluster name
             cluster_name = os.path.basename(cluster_path)
             # Ensure cluster path still exist (not moved to uniprot)
-            if not os.path.exits(cluster_path):
+            if not os.path.exists(cluster_path):
                 continue
             # Add cluster name to set of valid ones
             cluster_names.add(cluster_name)
