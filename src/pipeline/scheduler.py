@@ -1,36 +1,29 @@
 class Scheduler(object):
 
+    # Constructor
     def __init__(self, cluster_type, **kwargs):
         # Save cluster type
         self.cluster_type = cluster_type
-        # Save cluster arguments (as dictionary)
+        # Save cluster kwargs
         self.cluster_kwargs = kwargs
+        # Define inner cluster
+        self.cluster = self.cluster_type(**self.cluster_kwargs)
+        # Define inner CLient
+        self.client = Client(self.cluster)
 
-    # Retrieve new cluster
-    def get_cluster(self, **kwargs):
-        # Override saved args with given kwargs (not persistently tough)
-        kwargs = {**self.cluster_kwargs, **kwargs}
-        # Instantiate cluster with given kwargs
-        cluster = self.cluster_type(**kwargs)
-        # Return the new cluster
-        return cluster
-
-    # Retrieve new client
-    def get_client(self, **kwargs):
-        # Just create new cluster
-        cluster = self.get_cluster(**kwargs)
-        # Generate new client over the created cluster
-        client = Client(cluster)
-        # return either the cluster and the client
-        return cluster, client
+    # Stop connection to cluster
+    def close(self):
+        # Close inner cluster
+        self.cluster.close()
+        # Close inner client
+        self.client.close()
 
     # Open
     def __enter__(self, **kwargs):
-        # Return new cluster and new client
-        return cluster, client
+        # Just return self
+        return self
 
     # Close
     def __exit__(self):
-        # TODO Close cluster
-        # TODO Close client
-        raise NotImplementedError
+        # Just call close method
+        self.close()

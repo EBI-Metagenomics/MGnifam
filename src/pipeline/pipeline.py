@@ -61,22 +61,34 @@ class Log(object):
 class Pipeline(object):
 
     # Constructor
-    def __init__(self, cluster_type, cluster_params=dict()):
+    def __init__(self, cluster_type, cluster_kwargs):
         # Store dask arguments
         self.cluster_type = cluster_type
-        self.cluster_params = cluster_params
+        self.cluster_kwargs = cluster_kwargs
 
     # Make Dask cluster
-    def get_cluster(self, cluster_params=dict()):
+    def get_cluster(self, cluster_kwargs=dict()):
         # Update default cluster kwargs
-        cluster_params = {**self.params, **cluster_params}
+        cluster_kwargs = {**self.cluster_kwargs, **cluster_kwargs}
         # Make new cluster
         return self.cluster_type(**cluster_kwargs)
 
     # Make Dask client
     def get_client(self, *args, **kwargs):
+        # Define new cluster
+        cluster = self.get_cluster(*args, **kwargs)
+        # Define new client
+        client = Client(client)
         # Return client containing cluster
-        return Client(self.get_cluster(*args, **kwargs))
+        return cluster, client
+
+    # Close Dask cluster and client
+    @staticmethod
+    def close_client(cluster, client):
+        # Close cluster first
+        cluster.close()
+        # Then, close client
+        client.close()
 
     # Wrapper for run method
     def __call__(self, *args, **kwargs):

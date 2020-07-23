@@ -314,7 +314,7 @@ class OldRelease(Pipeline):
             clusters_path=batch_path,
             cluster_names=cluster_names,
             db='uniprot',
-            withpfbake=True,
+            withpfmake=True,
             make_eval=None,
             verbose=verbose
         )
@@ -465,7 +465,7 @@ class OldRelease(Pipeline):
             clusters_paths=build_path,
             cluster_names=cluster_names,
             db='uniprot',
-            withpfbake=True,
+            withpfmake=True,
             make_eval=None,
             verbose=verbose
         )
@@ -495,7 +495,7 @@ class OldRelease(Pipeline):
             clusters_paths=build_path,
             cluster_names=cluster_names,
             db='mgnifam',
-            withpfbake=True,
+            withpfmake=True,
             make_eval=0.01,
             verbose=verbose
         )
