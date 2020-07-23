@@ -929,7 +929,7 @@ class OldRelease(Pipeline):
     # Run check_uniprot.pl
     def check_uniprot(self, clusters_path):
         # Run check_uniprot.pl in current batch directory
-        ran = subprocess.run(
+        return subprocess.run(
             capture_output=True,
             encoding='utf-8',
             check=True,
@@ -970,7 +970,7 @@ class OldRelease(Pipeline):
         verbose (bool)          Wether to show verbose log or not
         """
         # Get cluster name from cluster path
-        cluster_name = path.basename(cluster_path)
+        cluster_name = os.path.basename(cluster_path)
 
         # Define discard path
         discard_path = os.path.join(noaln_path, cluster_name)
