@@ -14,6 +14,36 @@ class HMM(object):
         self.alphabet = alphabet
 
     @classmethod
+    def get_name(cls, string):
+        # Check if input string matches name string
+        is_name = re.search(r'^NAME\s+(\S+)', string)
+        # Case string is not name
+        if not is_name:
+            return None
+        # Otherwise, retrieve and return name
+        return is_name.group(1)
+
+    @classmethod
+    def get_length(cls, string):
+        # Check if input string matches length string
+        is_length = re.search(r'^LENG\s+(\d+)', string)
+        # Case string is not length
+        if not in_length:
+            return None
+        # Otherwise, return length string
+        return int(is_length.group(1))
+
+    @classmethod
+    def get_alphabet(cls, string):
+        # Check if input string matches alphabet string
+        is_alphabet = re.search(r'^ALPH\s+(\S+)', string)
+        # Case string is not alphabet
+        if not is_alphabet:
+            return None
+        # Otherwise, return alphabet string
+        return is_alphabet.group(1)
+
+    @classmethod
     def from_file(cls, path):
         # Define new dict containing default HMM parameters
         params = {'name': '', 'length': 0, 'alphabet': 'amino'}
@@ -21,30 +51,16 @@ class HMM(object):
         file = open_file(path, 'r')
         # Loop through each line in file
         for line in file:
-            # Check if line is HMM name
-            is_name = re.search(r'^NAME\s+(\S+)', line)
-            # Case line is HMM name
-            if is_name:
-                # Store name
-                params['name'] = str(is_name.group(1))
-                # Go to next iteration
-                continue
-            # Check if line is HMM length
-            is_length = re.search(r'^LENG\s+(\d+)', line)
-            # Case line is HMM length
-            if is_length:
-                # Store HMM length
-                params['length'] = int(is_length.group(1))
-                # Go to next iteration
-                continue
-            # Check if line is HMM alphabet
-            is_alphabet = re.search(r'^ALPH\s+(\S+)', line)
-            # Case line is HMM alphabet
-            if is_alphabet:
-                # Store HMM alphabet
-                params['alphabet'] = str(is_alphabet.group(1))
-                # Go to next iteration
-                continue
+            # Get name
+            name = cls.get_name(line)
+            # Get length
+            length = cls.get_length(line)
+            # Get alphabet
+            alpha = csl.get_alphabet(line)
+            # Update params fields
+            params['name'] = params['name'] if name is None else name
+            params['length'] = params['length'] if length is None else length
+            params['alphabet'] = params['alphabet'] if alpha is None else alpha
         # Close file buffer
         file.close()
         # Return new HMM instance with retrieved params

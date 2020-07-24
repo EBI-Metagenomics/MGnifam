@@ -135,7 +135,7 @@ class OldRelease(Pipeline):
 
         # Update log
         log({
-            'batches_size': batch_index + 1,
+            'num_batches': batch_index + 1,
             'batches_time': batch_tot
         })
 
@@ -462,7 +462,7 @@ class OldRelease(Pipeline):
 
         # Make HMMs and search them against UniProt
         time_run, cluster_names = self.make_hmm_models(
-            clusters_paths=build_path,
+            clusters_path=build_path,
             cluster_names=cluster_names,
             db='uniprot',
             withpfmake=True,
@@ -492,7 +492,7 @@ class OldRelease(Pipeline):
 
         # Make HMMs and search them against MGnifam
         time_run, cluster_names = self.make_hmm_models(
-            clusters_paths=build_path,
+            clusters_path=build_path,
             cluster_names=cluster_names,
             db='mgnifam',
             withpfmake=True,
@@ -988,7 +988,7 @@ class OldRelease(Pipeline):
         raw_shape = raw_seed.aln.shape
         # Verbose log
         if verbose:
-            print('Raw seed alignment has shape {:d} x {:d}'.fromat(*raw_shape))
+            print('Raw seed alignment has shape {:d} x {:d}'.format(*raw_shape))
 
         # Go through multiple sequence alignment transformation pipeline
         new_seed = transform(raw_seed)
