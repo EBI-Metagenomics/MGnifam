@@ -17,11 +17,8 @@ sys.path.append(os.path.dirname(os.path.realpath(__file__) + '/..'))
 from src.pipeline.pipeline import Pipeline, Log
 from src.utils import benchmark, get_paths
 from src.bjob import Bjob
-from src.msa import MSA
-from src.transform import Transform
-from src.transform import Compose
-from src.transform import OccupancyTrim
-from src.transform import OccupancyFilter
+from src.msa.msa import MSA
+from src.msa.transform import Compose, OccupancyTrim, OccupancyFilter
 
 
 # Define new pipeline
