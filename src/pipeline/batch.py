@@ -1,17 +1,21 @@
 # Dependencies
+from src.pipeline.pipeline import Pipeline
 from src.msa.transform import Compose, OccupancyTrim, OccupancyFilter
+from src.msa.msa import Muscle
 from src.hmm.hmmer import HMMBuild, HMMSearch
 from src.dataset import LinClust
 from src.dataset import Fasta
 from src.disorder import MobiDbLite
 from src.disorder import compute_threshold, compute_comp_bias
-from src.msa import Muscle
+from src.utils import benchmark
 from glob import iglob
 from time import time
+import json
+import os
 import re
 
 
-class BatchPipeline(Pipeline):
+class Batch(Pipeline):
     """ Make a batch of LinCLust clusters
 
     This pipeline takes as input a list of cluster names, for each cluster
@@ -30,7 +34,7 @@ class BatchPipeline(Pipeline):
         comp_bias_threshold=0.2, comp_bias_inclusive=True,
         # Automatic trimming settings
         trim_threshold=0.4, trim_inclusive=True,
-        filter_thresold=0.5, filter_inclsive=True,
+        filter_threshold=0.5, filter_inclusive=True,
         # Post trimming settings
         seed_min_width=1, seed_min_height=1,
         # Search against UniProt settings
@@ -54,7 +58,7 @@ class BatchPipeline(Pipeline):
         self.comp_bias_inclusive = comp_bias_inclusive
         # Save automatic trimming settings
         self.trim_threshold = trim_threshold
-        sefl.trim_inclusive = trim_inclusive
+        self.trim_inclusive = trim_inclusive
         self.filter_threshold = filter_threshold
         self.filter_inclusive = filter_inclusive
         # Save post trimming settings
@@ -110,7 +114,7 @@ class BatchPipeline(Pipeline):
         if verbose:
             print('Running BATCH pipeline', end=' ')
             print('for {:d} clusters'.format(len(cluster_names)), end=' ')
-            print('at {:s}'.format(out_path))
+            print('at {:s}'.format(clusters_path))
 
         # Initialize sub-directories
         bias_path, noaln_path, discard_path, uniprot_path = self.init_subdir(clusters_path)
@@ -125,7 +129,7 @@ class BatchPipeline(Pipeline):
             fn=self.search_cluster_members,
             cluster_names=cluster_names,
             client=client,
-            verbose=verbose
+            verbose=False
         )
 
         # Initialize set of retrieved sequence accession numbers
@@ -148,8 +152,8 @@ class BatchPipeline(Pipeline):
 
         # Initialize mgnifam dict(sequence acc: fasta entry)
         mgnifam_seq = dict()
-        # TODO Fill mgnifam dictionary
-        time_run, fasta_sequences = benchmark(
+        # Fill mgnifam dictionary
+        time_run, (fasta_sequences, num_sequences) = benchmark(
             fn=self.search_fasta_sequences,
             sequences_acc=sequences_acc,
             fasta_dataset=self.mgnifam,
@@ -492,7 +496,8 @@ class BatchPipeline(Pipeline):
             # Retrieve either chunk sequences dict and chunk length
             chunk_sequences, chunk_length = results[i]
             # Update cluster sequences dictionary
-            fasta_sequences = {**fasta_sequences, **chunk_sequences}
+            for sequence_acc in chunk_sequences:
+                fasta_sequences[sequence_acc] = chunk_sequences[sequence_acc]
             # Update length of FASTA file
             fasta_length = fasta_length + chunk_length
 
@@ -531,7 +536,7 @@ class BatchPipeline(Pipeline):
         if verbose:
             print('Computing compositional bias', end=' ')
             print('for {:d} clusters'.format(len(cluster_members)), end=' ')
-            print('and {:d} sequences'.format(len(fasta_seqeunces)))
+            print('and {:d} sequences'.format(len(fasta_sequences)))
 
         # Initialize futures dict(cluster name: compositional bias)
         futures = dict()
@@ -555,7 +560,7 @@ class BatchPipeline(Pipeline):
             )
 
             # Save future
-            futures.append(future)
+            futures[cluster_name] = future
 
         # Retrieve results
         results = client.gather(futures.values())

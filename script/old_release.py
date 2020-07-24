@@ -79,7 +79,7 @@ class OldRelease(Pipeline):
         # Define build directory
         build_path = os.path.join(out_path, 'build')
         # CHeck if directory already exists
-        if os.path.exists(build_path):
+        if not os.path.exists(build_path):
             # Make build directory
             os.mkdir(build_path)
 
@@ -748,9 +748,6 @@ class OldRelease(Pipeline):
         # Initialize timers
         time_beg, time_end = time(), 0.0
 
-        # Initialize cluster iterator
-        clusters_iter = iglob(os.path.join(clusters_path, 'MGYP*'))
-
         # Discard clusters
         discarded_names, cluster_names = self.discard_clusters(
             clusters_path=clusters_path,
@@ -764,6 +761,8 @@ class OldRelease(Pipeline):
 
         # Reinitialize cluster names
         cluster_names = set()
+        # Define clusters iterator
+        cluster_iter = iglob(os.path.join(clusters_path, 'MGYP*'))
         # Go through clusters again
         for cluster_path in clusters_iter:
             # Define cluster name
@@ -813,16 +812,25 @@ class OldRelease(Pipeline):
 
         # Initialize cluster iterator
         clusters_iter = iglob(os.path.join(clusters_path, 'MGYP*'))
+        # Go through each cluster in path
+        for cluster_path in clusters_iter:
+            # Get cluster name
+            cluster_name = os.path.dirname(clusters_path)
+            # If
 
         # Define names of discarded clusters
         discarded_names, cluster_names = self.discard_clusters(
             clusters_path=clusters_path,
             discard_path=discard_path,
+            cluster_names=cluster_names,
             verbose=verbose
         )
 
         # Run annotation script
-        self.run_annotate()
+        self.run_annotate(
+            clusters_path=clusters_path,
+            author_name=author_name
+        )
 
         # Update timers
         time_end = time()

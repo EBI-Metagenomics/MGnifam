@@ -78,7 +78,7 @@ class Pipeline(object):
         # Define new cluster
         cluster = self.get_cluster(*args, **kwargs)
         # Define new client
-        client = Client(client)
+        client = Client(cluster)
         # Return client containing cluster
         return cluster, client
 

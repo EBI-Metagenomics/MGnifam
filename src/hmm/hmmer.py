@@ -72,7 +72,7 @@ class HMMBuild(HMMER):
 class HMMAlign(HMMER):
 
     # Constructor
-    def __init__(self, cmd=['hmmalign'], env=os.env.copy()):
+    def __init__(self, cmd=['hmmalign'], env=os.environ.copy()):
         # Call parent constructor
         super().__init__(cmd=cmd, env=env)
 

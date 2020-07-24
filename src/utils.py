@@ -77,7 +77,7 @@ def benchmark(fn, *args, **kwargs):
     # Update timers
     time_end = time.time()
     # Return Function results and time taken
-    return results, (time_end - time_beg)
+    return (time_end - time_beg), results
 
 
 # Turn memory string into bits

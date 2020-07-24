@@ -8,7 +8,7 @@ import sys
 import os
 import re
 
-class MobiDBLite(object):
+class MobiDbLite(object):
 
     # Constructor
     def __init__(self, cmd=['mobidb_lite.py'], env=os.environ.copy()):
