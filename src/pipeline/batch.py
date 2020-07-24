@@ -234,8 +234,75 @@ class BatchPipeline(Pipeline):
             verbose=verbose
         )
 
-        # TODO Search HMM models against UniProt
+        # Verbose log
+        if verbose:
+            print('HMM library done', end=' ')
+            print('for {:d} clusters'.format(len(cluster_names)))
+            print('at {:s}'.format(lib_path), end=' ')
+            print('in {:.0f}'.format(time_run))
 
+        # Get UniProt size
+        time_run, (uniprot_longest, uniprot_length) = benchmark(
+            fn=self.get_longest,
+            target_dataset=self.uniprot,
+            client=client
+        )
+
+        # Verbose log
+        if verbose:
+            print('Retrieved UniProt longest sequence:')
+            print(uniprot_longest)
+            print('in {:.0f} seconds'.format(time_run), end=' ')
+            print('among {:d} sequences'.format(uniprot_length))
+
+        # Close previous client
+        self.close_client(cluster, client)
+
+        # Get maximum number of cores
+        max_cores = self.cluster_kwargs.get('cores')
+        # Get maximum available memory per job
+        max_memory = self.cluster_kwargs.get('memory')
+        # Get minimum required memory per CPU
+        req_memory = HMMSearch.get_memory(
+            model_len=lib_length,
+            longest_seq=len(uniprot_longest)
+        )
+        # Define maximum number of CPUs (cores) allocable to run hmmsearch
+        num_cores = HMMSearch.get_cpus(
+            model_len=lib_length,
+            max_memory=max_memory,
+            max_cpus=max_cores,
+            longest_seq=len(uniprot_longest)
+        )
+
+        # Check if memory is sufficient
+        if not num_cores:
+            # Raise new memory exception
+            raise MemoryError(' '.join([
+                'Unable to start HMM search against target dataset:',
+                'minimum required memory is {:.0f} GB'.format(req_memory / 1e09),
+                'while maximum allocable is {:s}'.format(max_memory)
+            ]))
+
+        # Instantiate new cluster with given parameters
+        cluster, client = self.get_client({
+            'cores': num_cores,
+            'memory': max_memory
+        })
+
+        # Search HMM models against UniProt
+        time_run, _ = benchmark(
+            fn=self.search_hmm_dataset,
+            hmm_path=lib_path,
+            clusters_path=clusters_path,
+            target_dataset=self.uniprot,
+            e_value=self.uniprot_e_value,
+            z_score=uniprot_length,
+            n_cores=num_cores,
+            client=client
+        )
+
+        # TODO Check for search results in UniProt
 
         # Update timers
         time_end = time()
@@ -286,6 +353,48 @@ class BatchPipeline(Pipeline):
             sub_paths[i] = sub_path
         # Return sub-directories paths
         return tuple(sub_paths)
+
+    # Retrieve longest sequence of a sequences dataset
+    def get_longest(self, target_dataset, client):
+        """ Retrieve longest sequence and dataset length
+
+        Args
+        target_dataset (list)       List of target dataset chunks to go through
+        client (Client)             Dask client used to distribute search
+
+        Return
+        (str)                       Longest sequence in FASTA dataset
+        (int)                       Dataset length
+        """
+        # Initailize list of futures
+        futures = list()
+        # Loop through each chunk in dataset
+        for chunk in target_dataset:
+            # Submit length function
+            future = client.submit(chunk.get_longest, ret_length=True)
+            # Store future
+            futures.append(future)
+
+        # Retrieve results
+        results = client.gather(futures)
+
+        # Initialize longest sequence
+        longest_seq = ''
+        # Initialize dataset length
+        dataset_len = 0
+        # Loop through each result
+        for i in range(len(results)):
+            # Get either longest sequence and dataset length
+            chunk_longest, chunk_len = results[i]
+            # Case current sequence is longer than previous longest
+            if len(longest_seq) < len(chunk_longest):
+                # Update longest sequences
+                longest_seq = chunk_longest
+            # Update dataset length
+            dataset_len += chunk_len
+
+        # Return both longest sequence and dataset length
+        return longest_seq, dataset_len
 
     # Search for cluster members
     def search_cluster_members(self, cluster_names, client, verbose=False):
@@ -817,7 +926,7 @@ class BatchPipeline(Pipeline):
         return lib_path, lib_length, in_library
 
     # Search HMM against a target dataset
-    def search_hmm_dataset(self, hmm_path, results_path, chunks, client, cores, verbose=False):
+    def search_hmm_dataset(self, hmm_path, target_dataset, e_value, z_score, n_cores, client, verbose=False):
         """ Search HMM model/library against target dataset
 
         Searches a HMM model or a HMM library (which are handled in the same
@@ -825,12 +934,13 @@ class BatchPipeline(Pipeline):
         script. Makes a single .tsv table with all the results for each cluster.
 
         Args
-        hmm_path (str)          Path to HMM model to search against given
-                                target dataset
-        results_path (str)      Path where search results are stored
-        chunks (list)           List of target chunks (Dataset)
+        hmm_path (str)          Path to searched HMM model
+        clusters_path (str)     Path where search results file must be stored
+        target_dataset (list)   List of target dataset chunks
+        e_value (float)         E-value to define a match significant
+        z_score (int)           Z-score defining whole dataset length
+        n_cores (int)           Number of cores available per job
         client (Client)         Client used to spawn jobs on cluster
-        cores (int)             Number of cores available per job
         verbose (bool)          Whether to print verbose log or not
         """
         # Verbose log
@@ -838,22 +948,46 @@ class BatchPipeline(Pipeline):
             print('Searching HMM models', end=' ')
             print('for {:d} clusters'.format(len(cluster_names)))
 
-        # Make empty results file
-        results_file = open(results_path, 'w').close()
-
         # Initialize futures
         futures = list()
         # Loop through each target dataset
         for chunk in chunks:
             # Get chunk path
             chunk_path = chunk.path
-            #
             # Submit search function
             future = client.submit(
                 func=self.search_hmm_chunk,
-                path=chunk_path,
-                cores=cores
+                hmm_path=hmm_path,
+                chunk_path=chunk_path,
+                results_path=results_path,
+                e_value=e_value,
+                z_score=z_score,
+                n_cores=n_cores,
+                hmm_search=self.hmm_search
             )
+
+            # Store future
+            futures.append(future)
+
+        # Retrieve results
+        results = client.gather(results)
+
+        # Define results path (DOMTBLOUT)
+        results_path = os.path.join(clusters_path, 'results.dom')
+        # Open results file
+        results_file = open(results_path, 'w')
+        # Loop through each result
+        for i in range(len(results)):
+            # Define path to current DOMTBLOUT file
+            domtblout_path = results[i]
+            # Open DOMTBLOUT path
+            with open(domtblout_path, 'r') as domtblout_file:
+                # Loop through each line in DOMTBLOUT file
+                for domtblout_line in domtblout_file:
+                    # Copy line to results file
+                    results_file.write(domtblout_line)
+            # Remove output DOMTBLOUT file
+            os.remove(domtblout_path)
 
     @staticmethod
     def search_hmm_chunk(hmm_path, chunk_path, results_path, e_value, z_score, n_cores, hmm_search):
@@ -868,8 +1002,11 @@ class BatchPipeline(Pipeline):
         n_cores (int)           Number of cores allocalble to run hmmsearch
         hmm_search (HMMSearch)  Instance of hmmsearch object
         """
+
+        # Define if input chunk is gzipped
+        chunk_gzip = is_gzip(chunk_path)
         # Case input file is compressed
-        if is_gzip(chunk_path):
+        if chunk_gzip:
             # Get file extension from chunk path
             _, chunk_ext = os.path.splitext(chunk_path)
             # Unzip target path and overwrite given target dataset
@@ -877,7 +1014,6 @@ class BatchPipeline(Pipeline):
 
         # Initialize domtblout path
         domtblout_path = NamedTemporaryFile(delete=False, suffix='.dom').name
-
         # Run hmmsearch against given chunk
         hmm_search.run(
             # Path to searched HMM model/library file
@@ -894,21 +1030,39 @@ class BatchPipeline(Pipeline):
             seq_z=z_score
         )
 
-        # Open DOMTBLOUT output file
-        domtblout_file = open(domtblout_path, 'r')
-        # Define iterator through DOMTBLOUT output file
-        domtblout_iter = iter_domtblout(domtblout_file)
+        # Remove unzipped temporary file
+        if chunk_gzip:
+            os.remove(chunk_path)
 
-        # Open results file
-        with open(results_path, 'a+') as results_file:
-            # Go through each row in DOMTBLOUT output file
-            for row in bomtblout_iter:
-                # Get all cell values, get rid of cell titles
-                row = ([re.sub(r'\S+', ' ', v) for k, v in row])
-                # Write out line to results file
-                results_file.write('\t'.join(row) + '\n')
+        # Return domtblout path
+        return domtblout_path
+        # # Remove temporary DOMTBLOUT output file
+        # os.remove(domtblout_path)
 
-        # Close DOMTBLOUT output file
-        domtblout_file.close()
-        # Remove temporary DOMTBLOUT output file
-        os.remove(domtblout_path)
+    # Search HMM search results against UniProt
+    def check_hmm_uniprot(self, cluster_names, clusters_path, verbose=False):
+        """ Check HMM search against UniProt results
+
+        Args
+        cluster_names (set)     Set of cluster names which must be searched
+        clusters_path (str)     Path where results file can be found
+        verbose (bool)          Whether to print out verbose log or not
+
+        Return
+        (set)                   Set of cluster names not found in UniProt
+        """
+        # Verbose log
+        if verbose:
+            print('Checking matches against UniProt', end=' ')
+            print('for {:d} clusters'.format(len(cluster_names)), end=' ')
+            print('at {:s}'.format(clusters_path))
+
+        # Define path to results file
+        results_path = os.path.join(clusters_path, 'results.dom')
+        # Ensure that results file actually exists
+        if not os.path.exists(results_path):
+            # Raise new exception and interrupt execution
+            raise FileNotFoundError(' '.join([
+                'UniProt DOMTBLOUT file not found',
+                'at {:s}: exiting'.format(results_path)
+            ]))

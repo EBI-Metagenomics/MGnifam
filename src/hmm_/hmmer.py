@@ -189,8 +189,12 @@ class HMMSearch(HMMER):
             args=cmd  # Set command line arguments
         )
 
-    @staticmethod
-    def get_cpus(max_memory, model_len, max_cpus=1, longest_seq=4e04, num_bytes=48):
+    @classmethod
+    def get_memory(cls, model_len, longest_seq=4e04, num_bytes=28):
+        return model_len * longest_seq * num_bytes
+
+    @classmethod
+    def get_cpus(cls, max_memory, model_len, max_cpus=1, longest_seq=4e04, num_bytes=48):
         """Computes the resources needed to run hmmscan
 
         Number of cpus is the maximum number of cpus satisfying the following:
@@ -215,7 +219,7 @@ class HMMSearch(HMMER):
                                 are not fitting computational ones)
         """
         # Compute number of Gb required by a single core
-        req_memory = math.ceil(model_len * longest_seq * num_bytes)
+        req_memory = cls.get_memory(model_len, longest_seq, num_bytes)
         # Loop from maximum number of CPUS to minimum (1)
         for num_cpus in range(max_cpus, 0, -1):
             # Check memory allocated to a single core
