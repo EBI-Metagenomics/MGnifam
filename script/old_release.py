@@ -762,7 +762,7 @@ class OldRelease(Pipeline):
         # Reinitialize cluster names
         cluster_names = set()
         # Define clusters iterator
-        cluster_iter = iglob(os.path.join(clusters_path, 'MGYP*'))
+        clusters_iter = iglob(os.path.join(clusters_path, 'MGYP*'))
         # Go through clusters again
         for cluster_path in clusters_iter:
             # Define cluster name
@@ -809,14 +809,6 @@ class OldRelease(Pipeline):
         # Verbose log
         if verbose:
             print('Annotating {:d} clusters'.format(len(cluster_names)))
-
-        # Initialize cluster iterator
-        clusters_iter = iglob(os.path.join(clusters_path, 'MGYP*'))
-        # Go through each cluster in path
-        for cluster_path in clusters_iter:
-            # Get cluster name
-            cluster_name = os.path.dirname(clusters_path)
-            # If
 
         # Define names of discarded clusters
         discarded_names, cluster_names = self.discard_clusters(
