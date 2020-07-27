@@ -491,7 +491,7 @@ class OldRelease(Pipeline):
         time_run, cluster_names = self.make_hmm_models(
             clusters_path=build_path,
             cluster_names=cluster_names,
-            db='mgnifam',
+            db='mgnify',
             with_pfmake=True,
             make_eval=0.01,
             verbose=verbose

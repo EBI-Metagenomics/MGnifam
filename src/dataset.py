@@ -73,6 +73,8 @@ class Fasta(Dataset):
     def get_longest(self):
         # Initialize current longest entry and its length (number of residues)
         longest_seq, longest_len = '', 0
+        # Initailize number of sequences
+        num_sequences = 0
         # Open inner dataset file path
         with open_file(self.path) as file:
             # Loop through each file entry
@@ -84,9 +86,11 @@ class Fasta(Dataset):
                 # Case current sequence is longer than longest
                 if curr_len > longest_len:
                     # Update longest sequence and its length
-                    longest_seq, longest_lenn = curr_seq, curr_len
+                    longest_seq, longest_len = curr_seq, curr_len
+                # Unpate number of sequences
+                num_sequences += 1
         # Return either longest sequence and its length
-        return longest_seq, longest_len
+        return longest_seq, longest_len, num_sequences
 
     # Chunking function
     def to_chunks(self, chunk_path='chunk{:03d}.tsv.gz', chunk_size=1e07):

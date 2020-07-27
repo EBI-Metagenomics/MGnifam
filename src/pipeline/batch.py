@@ -1048,7 +1048,7 @@ class Batch(Pipeline):
             # Remove .gz extension
             chunk_ext = re.sub(r'\.gz$', '', chunk_ext)
             # Unzip target path and overwrite given target dataset
-            chunk_path = gunzip(out_path=chunk_path, out_suffix=chunk_ext)
+            chunk_path = gunzip(in_path=chunk_path, out_suffix=chunk_ext)
 
         # Initialize output temporary file path
         out_path = NamedTemporaryFile(delete=False, suffix='.out').name
@@ -1073,7 +1073,7 @@ class Batch(Pipeline):
             # Path to per-pfam-domain output table
             pfamtblout_path=pfamtblout_path,
             # Define number of CPUs allocated
-            n_cpu=n_cores,
+            num_cpus=n_cores,
             # Set e-value
             seq_e=e_value,
             # Set z-score
@@ -1114,3 +1114,59 @@ class Batch(Pipeline):
                 'UniProt DOMTBLOUT file not found',
                 'at {:s}: exiting'.format(results_path)
             ]))
+
+
+# Unit testing
+if __name__ == '__main__':
+
+    # Define path to root
+    ROOT_PATH = os.path.join(os.path.dirname(__file__), '..', '..')
+    # Define path to example clusters
+    EXAMPLES_PATH = os.path.join(ROOT_PATH, 'tmp', 'examples', 'MGYP*')
+    # Define path to UniProt dataset
+    UNIPROT_PATH = os.path.join(ROOT_PATH, 'data_', 'uniprot', 'chunk*.fa.gz')
+    # Define path to MGnifam dataset
+    MGNIFAM_PATH = os.path.join(ROOT_PATH, 'data_', 'mgnify', 'chunk*.fa.gz')
+
+    # Define new UniProt dataset
+    uniprot = Fasta.from_str(UNIPROT_PATH)
+    # Define ner MGnifam dataset
+    mgnifam = Fasta.from_str(MGNIFAM_PATH)
+
+    # Get first chunk in UniProt dataset
+    chunk = uniprot[0]
+    # Get longest sequence in chunk
+    longest_seq, longest_len, chunk_size = chunk.get_longest()
+    # Print longest sequence and chunk size
+    print('Longest sequence found is of size {:d}:'.format(longest_len))
+    print(longest_seq)
+    print('among other {:d} sequences'.format(chunk_size))
+
+    # Retrieve first example cluster
+    cluster_path = next(iglob(EXAMPLES_PATH))
+    # Get chosen cluster name
+    cluster_name = os.path.basename(cluster_path)
+    # Show which cluster has been chosen
+    print('Chosen cluster is {:s} at {:s}'.format(cluster_name, cluster_path))
+
+    # Retrieve HMM from given cluster
+    hmm_path = os.path.join(cluster_path, 'HMM')
+    # Retrieve first chunk of UniProt
+    chunk_path = chunk.path
+    # Initialize new hmmsearch script
+    hmm_search = HMMSearch()
+    # Search HMM against first UniProt chunk
+    out_path, tblout_path, domtblout_path, pfamtblout_path = Batch.search_hmm_chunk(
+        hmm_path=hmm_path,
+        chunk_path=chunk_path,
+        hmm_search=hmm_search,
+        e_value=1e03,
+        z_score=9e05,
+        n_cores=1
+    )
+    # Print output paths
+    print('Files retrieved from HMMSEARCH:')
+    print('  {:s}'.format(out_path))
+    print('  {:s}'.format(tblout_path))
+    print('  {:s}'.format(domtblout_path))
+    print('  {:s}'.format(pfamtblout_path))
