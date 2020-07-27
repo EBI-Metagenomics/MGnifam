@@ -72,9 +72,9 @@ class Fasta(Dataset):
     # Get longest sequence
     def get_longest(self):
         # Initialize current longest entry and its length (number of residues)
-        long_seq, long_len = '', 0
+        longest_seq, longest_len = '', 0
         # Open inner dataset file path
-        with open_file(self.pah) as file:
+        with open_file(self.path) as file:
             # Loop through each file entry
             for entry in fasta_iter(file):
                 # Split current entry in header and residues
@@ -82,11 +82,11 @@ class Fasta(Dataset):
                 # Get current sequence and its number of residues
                 curr_seq, curr_len = entry, len(residues)
                 # Case current sequence is longer than longest
-                if curr_len > long_len:
+                if curr_len > longest_len:
                     # Update longest sequence and its length
-                    long_seq, long_len = curr_seq, curr_len
+                    longest_seq, longest_lenn = curr_seq, curr_len
         # Return either longest sequence and its length
-        return long_seq, long_len
+        return longest_seq, longest_len
 
     # Chunking function
     def to_chunks(self, chunk_path='chunk{:03d}.tsv.gz', chunk_size=1e07):

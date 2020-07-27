@@ -194,7 +194,7 @@ class Bjob(object):
             print('Killed job {:s}'.format(str(job_id)))
 
     @classmethod
-    def id_from_string(cls,in_string, verbose=False):
+    def id_from_string(cls, in_string, verbose=False):
         """ Retrieve process id from verbose output
 
         Args
@@ -221,7 +221,7 @@ class Bjob(object):
 
         # Verbose log
         if verbose:
-            print('Retrieved job id {:s}'.format(job_id))
+            print('Retrieved job id {:s}'.format(str(job_id)))
             print('from {:s}'.format(in_string))
 
         # Return retrieved job id

@@ -1,4 +1,5 @@
 # Dependencies
+from src.utils import open_file
 import sys
 import os
 import re
@@ -28,7 +29,7 @@ class HMM(object):
         # Check if input string matches length string
         is_length = re.search(r'^LENG\s+(\d+)', string)
         # Case string is not length
-        if not in_length:
+        if not is_length:
             return None
         # Otherwise, return length string
         return int(is_length.group(1))
@@ -56,7 +57,7 @@ class HMM(object):
             # Get length
             length = cls.get_length(line)
             # Get alphabet
-            alpha = csl.get_alphabet(line)
+            alpha = cls.get_alphabet(line)
             # Update params fields
             params['name'] = params['name'] if name is None else name
             params['length'] = params['length'] if length is None else length

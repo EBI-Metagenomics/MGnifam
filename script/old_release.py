@@ -311,7 +311,7 @@ class OldRelease(Pipeline):
             clusters_path=batch_path,
             cluster_names=cluster_names,
             db='uniprot',
-            withpfmake=True,
+            with_pfmake=True,
             make_eval=None,
             verbose=verbose
         )
@@ -462,7 +462,7 @@ class OldRelease(Pipeline):
             clusters_path=build_path,
             cluster_names=cluster_names,
             db='uniprot',
-            withpfmake=True,
+            with_pfmake=True,
             make_eval=None,
             verbose=verbose
         )
@@ -492,7 +492,7 @@ class OldRelease(Pipeline):
             clusters_path=build_path,
             cluster_names=cluster_names,
             db='mgnifam',
-            withpfmake=True,
+            with_pfmake=True,
             make_eval=0.01,
             verbose=verbose
         )
@@ -701,7 +701,7 @@ class OldRelease(Pipeline):
             if cluster_name not in cluster_names:
                 continue  # Skip iteration
             # Run PFBUILD
-            bjobs[cluster_name] = self.run_pfbuild(cluster_path, **kwargs)
+            bjobs[cluster_name] = self.run_pfbuild(cluster_path, verbose=True, **kwargs)
         # Check jobs
         Bjob.check(bjobs.values(), delay=30, verbose=verbose)
 
@@ -896,11 +896,11 @@ class OldRelease(Pipeline):
         return Bjob(id=job_id, status='RUN')
 
     # Run pfbuild/mfbuild
-    def run_pfbuild(self, cluster_path, db='uniprot', withpfmake=True, make_eval=None):
+    def run_pfbuild(self, cluster_path, db='uniprot', with_pfmake=True, make_eval=None, verbose=False):
         # Make list of arguments
         args = ['pfbuild']
         # Check if 'withpfmake' is enabled
-        args += ['-withpfmake'] if withpfmake else []
+        args += ['-withpfmake'] if with_pfmake else []
         # Define database
         args += ['-db', db]
         # Check if 'make eval' is enabled
@@ -913,10 +913,17 @@ class OldRelease(Pipeline):
             cwd=cluster_path,  # Set directory
             args=args
         )
+        # Verbose log
+        if verbose:
+            print('pfbuild out:')
+            print(ran.stdout)
+            print(ran.stderr)
         # Get process id as string
-        job_id = Bjob.id_from_string(ran.stdout)
+        job_id = Bjob.id_from_string(ran.stdout, verbose=True)
+        # Get job status
+        job_status = 'RUN' if job_id else 'EXIT'
         # Return new Bjob instance
-        return Bjob(id=job_id, status='RUN')
+        return Bjob(id=job_id, status=job_status)
 
     # # Run pfbuild with mfbuild parameters as default
     # def mfbuild(self, cluster_path, db='mgnify', withpfmake=True, make_eval=0.01):

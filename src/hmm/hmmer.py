@@ -1,5 +1,6 @@
 # Dependencies
 import subprocess
+import re
 import os
 
 
@@ -29,7 +30,7 @@ class HMMBuild(HMMER):
 
     # Run HMM build script
     def run(
-        self, msa_path, out_path, name=None, log_path='/dev/null',
+        self, msa_path, hmm_path, name=None, log_path='/dev/null',
         alphabet='amino'
     ):
 
@@ -50,7 +51,7 @@ class HMMBuild(HMMER):
         cmd += ['-o', log_path]
 
         # Set output file path
-        cmd += [out_path]
+        cmd += [hmm_path]
         # Set input MSA file in script
         cmd += [msa_path]
 
@@ -96,7 +97,7 @@ class HMMAlign(HMMER):
         cmd = [self.cmd]
         # Set mandatory command line options
         cmd += [hmm_path]  # HMM model file path
-        cms += [fasta_path]   # Target dataset file path
+        cmd += [fasta_path]   # Target dataset file path
         cmd += ['>', out_path]  # Output file path
 
         # Execute script

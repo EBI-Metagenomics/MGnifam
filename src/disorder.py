@@ -24,19 +24,17 @@ class MobiDbLite(object):
         predicted to be disordered, 0 otherwise.
 
         Args
-        sequences (dict(str: str))  Dictionary whose keys are sequence accession
-                                    and values are fasta entries
-        verbose (bool)              Wether to show verbose log or not
+        sequences (dict)        Dictionary whose keys are sequence accession
+                                number and values are fasta entries
+        verbose (bool)          Wether to show verbose log or not
 
         Return
-        (dict(str: list))           List of boolean (1/0) lists
+        (dict(str: list))       List of boolean (1/0) lists
         """
         # Define temporary input file
         fasta_file = tempfile.NamedTemporaryFile(delete=False)
         # Define temporary output file
         out_file = tempfile.NamedTemporaryFile(delete=False)
-
-
 
         # Initialize residues dict(acc: residues)
         residues = dict()
@@ -290,7 +288,7 @@ if __name__ == '__main__':
     print('There are {:d} input sequences'.format(len(sequences)))
 
     # Make new instance of MobiDB Lite
-    mdb_lite = MobiDBLite(env=env)
+    mdb_lite = MobiDbLite(env=env)
     # Run MobiDB Lite predictor, get disordered regions
     disorder = mdb_lite.run(sequences, verbose=True)
     # Debug
