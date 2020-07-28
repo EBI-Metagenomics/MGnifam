@@ -950,7 +950,7 @@ class OldRelease(Pipeline):
             check=True,
             env=self.env,
             cwd=clusters_path,
-            args=['annotateMGDUF.pl', '-directory', '.', '-author', author_name]
+            args=['annotateMGDUF.pl', '-author', author_name]
         )
 
     # Automatically trim SEED alignment
