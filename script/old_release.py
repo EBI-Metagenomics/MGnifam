@@ -1076,7 +1076,28 @@ if __name__ == '__main__':
         '-v', '--verbose', type=int, default=1,
         help='Whether to show verbose log or not'
     )
+    parser.add_argument(
+        '-e', '--env_path', type=str, required=False,
+        help='Path to JSON file holding environmental variables to override in subprocesses'
+    )
     args = parser.parse_args()
+
+    # Intialize environmental variables
+    env = os.environ.copy()
+    # If set, read environmental variables file
+    if args.env_path:
+        # Open input file
+        with open(args.env_path) as env_file:
+            # Retrieve new environmental variables
+            env_dict = json.load(env_file)
+            # Go through each environmental variable
+            for k, v in env_dict.items():
+                # Case value is a list
+                if isinstance(v, list):
+                    # Join using : (double dots) as separator
+                    env_dict[k] = ':'.join([str(v[i]) for i in range(len(v))])
+            # Override original environmental variables
+            env = {**env, **env_dict}
 
     # Instantiate new pipeline
     pipeline = OldRelease(delay=30, env=env)
