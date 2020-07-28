@@ -384,6 +384,7 @@ class Batch(Pipeline):
 
         Return
         (str)                       Longest sequence in FASTA dataset
+        (int)                       Length of longest sequence in FASTA dataset
         (int)                       Dataset length
         """
         # Initailize list of futures
@@ -391,7 +392,7 @@ class Batch(Pipeline):
         # Loop through each chunk in dataset
         for chunk in target_dataset:
             # Submit length function
-            future = client.submit(chunk.get_longest, ret_length=True)
+            future = client.submit(chunk.get_longest)
             # Store future
             futures.append(future)
 
@@ -399,29 +400,23 @@ class Batch(Pipeline):
         results = client.gather(futures)
 
         # Initialize longest sequence and its length
-        longest_seq = ''
-        longest_len = 0
+        longest_seq, longest_len = '', 0
         # Initialize dataset length
-        dataset_len = 0
+        dataset_size = 0
         # Loop through each result
         for i in range(len(results)):
             # Get either longest sequence and dataset length
-            chunk_longest, chunk_len = results[i]
-            # Split longest sequence in chunk into header and residues
-            chunk_header, chunk_residues = tuple(chunk_longest.split('\n'))
-            # Debug
-            print('Longest sequence in {:d}-th chunk:'.format(i+1))
-            print(chunk_longest)
+            chunk_longest_seq, chunk_longest_len, chunk_size = results[i]
             # Case current sequence is longer than previous longest
-            if longest_len < len(chunk_residues):
+            if longest_len < len(chunk_longest_len):
                 # Update longest sequences
-                longest_seq = chunk_longest
-                longest_len = len(chunk_residues)
+                longest_seq = chunk_longest_seq
+                longest_len = chunk_longest_len
             # Update dataset length
-            dataset_len += chunk_len
+            dataset_size += chunk_size
 
         # Return both longest sequence and dataset length
-        return longest_seq, dataset_len
+        return longest_seq, longest_len, dataset_size
 
     # Search for cluster members
     def search_cluster_members(self, cluster_names, client, verbose=False):

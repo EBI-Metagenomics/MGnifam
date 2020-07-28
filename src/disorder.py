@@ -8,6 +8,7 @@ import sys
 import os
 import re
 
+
 class MobiDbLite(object):
 
     # Constructor
@@ -17,45 +18,50 @@ class MobiDbLite(object):
         self.env = env  # Environmental variables
 
     # Run method
-    def run(self, sequences, verbose=True):
+    def run(self, fasta_sequences, out_path=None, verbose=False):
         """Run MobiDB Lite disorder predictor
         Takes as input a list of sequences and returns a lis of boolean (1/0)
         values, where an item has value 1 if the residue in the same position is
         predicted to be disordered, 0 otherwise.
 
         Args
-        sequences (dict)        Dictionary whose keys are sequence accession
-                                number and values are fasta entries
+        fasta_sequences (dict)  Dictionary whose keys are sequence accession
+                                numbers and values are fasta entries
+        out_path (str)          Where to save MobiDB output file
         verbose (bool)          Wether to show verbose log or not
 
         Return
-        (dict(str: list))       List of boolean (1/0) lists
+        (dict)                  Dict associating to accession numbers lists of
+                                boolean (1/0) lists
         """
         # Define temporary input file
-        fasta_file = tempfile.NamedTemporaryFile(delete=False)
-        # Define temporary output file
-        out_file = tempfile.NamedTemporaryFile(delete=False)
+        fasta_path = tempfile.NamedTemporaryFile(delete=False).name
 
-        # Initialize residues dict(acc: residues)
-        residues = dict()
-        # Fill residues dictionary
-        for acc in sequences.keys():
-            # Split sequence in header and residues
-            h, r = tuple(sequences[acc].split('\n'))
-            # Store residues
-            residues[acc] = list(r)
+        # Check if output file path has been set or must be made
+        make_out = (out_path is None)
+        # If output file must be made
+        if make_out:
+            # Define temporary output file
+            out_path = tempfile.NamedTemporaryFile(delete=False).name
 
         # Verbose log
         if verbose:
             print('Generating input fasta file...')
         # Make input fasta file
-        with open(fasta_file.name, 'w') as ff:
+        with open(fasta_path, 'w') as fasta_file:
+            # Initailize sequences iterator
+            sequences_iter = tqdm(
+                fasta_sequences.items(),
+                disable=(not verbose)
+            )
             # Loop through each input sequence
-            for acc, seq in tqdm(sequences.items(), disable=(not verbose)):
-                # Define new header
-                header = '>' + str(acc)
+            for sequence_acc, fasta_sequence in sequences_iter:
+                # Split fasta entry in header and residues
+                header, residues = tuple(fasta_sequence.split('\n'))
+                # Define new header using only sequence accession number
+                header = '>' + str(sequence_acc)
                 # Write out fasta entry
-                ff.write(header + '\n' + ''.join(residues[acc]) + '\n')
+                fasta_file.write(header + '\n' + ''.join(residues) + '\n')
 
         # Verbose log
         if verbose:
@@ -63,22 +69,19 @@ class MobiDbLite(object):
         # Initialize timers
         time_beg, time_end = time.time(), None
         # Run MobiDB Lite command
-        cmd_out = subprocess.run(
+        ran = subprocess.run(
             capture_output=True,  # Capture console output
             encoding='utf-8',  # stdout/stderr encoding
+            check=True,  # Check that script worked properly
             env=self.env,  # Environmental variables
-            # Executable arguments
-            args=[
-                *self.cmd,
-                '-o', out_file.name,  # Path to output file
-                fasta_file.name  # Path to input fasta file
-            ]
+            args=[*self.cmd, '-o', out_path, fasta_path]
         )
         # Update timers
         time_end = time.time()
+
         # Verbose log
         if verbose:
-            print('Command line output:', cmd_out) # Debug
+            print('Command line output:', ran)
             print('Took {:.0f} seconds to predict disordered regions over {:d} sequences'.format(
                 time_end - time_beg,  # Time took to run
                 len(sequences)  # Number of input sequences
@@ -90,9 +93,9 @@ class MobiDbLite(object):
         # Initialize empty dict(acc: residues positions)
         disorder = dict()
         # Read output file
-        with open(out_file.name, 'r') as of:
+        with open(out_path, 'r') as out_file:
             # Read through each line of MobiDB Lite
-            for line in tqdm(of, disable=(not verbose)):
+            for line in tqdm(out_file, disable=(not verbose)):
                 # Check if line is matching expected format
                 match = re.search(r'^(\S+)\s+(\d+)\s+(\d+)', line)
                 # Case line does not matches format
@@ -119,9 +122,12 @@ class MobiDbLite(object):
             # Create an array of zeroes with length #resdiues
             disorder[acc] = [[0] * n]
 
-        # Delete temporary files
+        # Delete temporary FASTA file
         os.remove(fasta_file.name)
-        os.remove(out_file.name)
+
+        # Eventually, remove output temporary file
+        if make_out:
+            os.remove(out_path)
 
         # Return disordered regions
         return disorder
@@ -133,12 +139,12 @@ def compute_comp_bias(sequences):
     number of residues in a set of sequences.
 
     Args
-    sequences (dict(str: list))     Dictionary associating accession numbers
-                                    to list of predictions
+    sequences (dict)    Dictionary associating accession numbers to list of
+                        disorder predictions
 
     Return
-    (float)                         Compositional bias (rate of disordered
-                                    residues over total number of residues)
+    (float)             Compositional bias (rate of disordered residues over
+                        total number of residues)
     """
     # Initialize total number of residues
     num_residues = 0
@@ -164,11 +170,11 @@ def compute_comp_bias(sequences):
 
 def compute_threshold(sequences, threshold=0, inclusive=False):
     """Apply threshold over disorder predictions
-    Defines wether a region i actually disordered or not by applying a
+    Defines wether a region is actually disordered or not by applying a
     threshold over number of positive predictions (1) for each residue.
 
     Args
-    sequences (dict(str: list))     Dictionary associating accession numbers
+    sequences (dict)                Dictionary associating accession numbers
                                     to list of predictions
     threshold (int/str)             Number of potitive predictions needed to
                                     consider a residue actually positive
@@ -207,10 +213,6 @@ def compute_threshold(sequences, threshold=0, inclusive=False):
 
         # Turn boolean vector into integer 0/1 vector
         pred = pred.astype(np.int)
-
-        # # Case no residue has been positively predicted
-        # if not pred.sum():
-        #     continue  # Skip iteration
 
         # Otherwise, save thresholded prediction as list
         disorder[acc] = [pred.tolist()]

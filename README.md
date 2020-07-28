@@ -143,6 +143,21 @@ under a folder that is named according the new release number.
 
 ### MGnifam setup (only for old release)
 
+First step for setting up MGnifam database is by downloading the Pfam source
+code directly from GitHub as follows:
+
+```
+git clone https://github.com/ProteinsWebTeam/Pfam.git
+cd Pfam
+git fetch origin mgnifam
+git checkout mgnifam
+```
+
+MGnifam core files can be found at:
+  1. `Pfam/PfamScripts/mgnifam/` for building MGnifam clusters;
+  2. `Pfam/PfamScripts/mgnifam_release` for releasing MGnifam clusters;
+  3. `nfs/production/xfam/mgnifam/Conf/mgnifam.conf` (example path) for MGnifam configuration;
+
 ### Environmental setup
 
 Both the old and the new MGnifam release pipelines must call external scripts:
