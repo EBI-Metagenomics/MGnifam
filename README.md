@@ -138,3 +138,87 @@ in the new release.
 
 New release files should be put in `/nfs/production/xfam/mgnifam/releases/`,
 under a folder that is named according the new release number.
+
+## Setup and usage
+
+### MGnifam setup (only for old release)
+
+### Environmental setup
+
+Both the old and the new MGnifam release pipelines must call external scripts:
+while the former is very dependent from the MGnifam Perl scripts (such as
+mgseed, pfbuild, mfbuild, ...) and its configuration (mgnifam.conf), the latter
+depends on only a few external scripts such as MobiDB Lite and HMMER3.
+
+In both cases, however, it could be that scripts require specific environmental
+variables setup to run properly (e.g. MobiDB Lite requires both Python 2 and 3
+to avoid crashing). For that purpose, boh pipelines implement the
+`[-e ENV_PATH]` optional parameter, allowing users to define a JSON file
+containing a dictionary: environmental variables names are the keys, while
+values are lists of strings which will the be automatically concatenated by the
+command line script using `: (double dots)` as separator.
+
+Example of `env.json` file:
+
+```
+{
+  "PATH": ["first/path", "second/path", "third/path"],
+  "PYTHONPATH": ["first/python/path", "second/python/path"]
+}
+```
+
+### Input
+
+Input of the pipelines are one or multiple file holding table in it, whose first
+column is cluster names (and second is cluster size for example, if any). Then,
+a batch size can be specified (how many HMM build must be run in parallel) and
+a maximum number of clusters can be set, limiting the number of clusters to
+read from input files (sequentially).
+
+### Annotator
+
+Each pipeline requires an author name: it is required to identify who
+actually ran the pipeline (either the new or the old one) and set it into
+clusters DESC files.
+
+### Version 1.0.0 (The old one)
+
+Old version of MGnifam release pipeline is strongly dependent to MGnifam source
+Perl scripts. Because of that, reference to them has to be kept inside of
+environmental variables, as well as a reference to the MGnifam configuration
+file, which is used to retrieve all the settings (such as database credentials,
+paths to database, ...).
+
+Usage:
+
+```
+release100.py [-h] --in_path IN_PATH [IN_PATH ...] --out_path OUT_PATH
+                   -a AUTHOR_NAME [-n MAX_CLUSTERS] [-b BATCH_SIZE]
+                   [-v VERBOSE] [-e ENV_PATH]
+```
+
+### Version 2.0.0 (The new one)
+
+New version of MGnifam release pipeline is not dependent on MGnifam Perl
+script. However, it still uses external scripts under the hood, while much less
+intensively than the old pipeline, such as MobiDB Lite and HMMER3. The former
+one, specifically, requires careful setup of both Python 2 and Python 3
+dependencies in order to run multiple disorder predictors being it just an
+ensemble predictor, whose inner predictor have different requirements.
+
+In this pipeline, batch size has a very high importance: in fact, parallel
+computations results are all sent back to main process, filling its memory.
+For example, one of the most memory intensive step is fasta sequences search
+against UniProt or MGnifam datasets, which will retrieve entire fasta sequences
+in dictionaries. In order to avoid memory issues is therefore mandatory to
+allocate a reasonable amount of memory to the main process and limiting the
+number of parallel computations (batch size) to a number between 10 and 100
+thousands.
+
+Usage:
+
+```
+release200.py [-h] --in_path IN_PATH [IN_PATH ...] --out_path OUT_PATH
+                   -a AUTHOR_NAME [-n MAX_CLUSTERS] [-b BATCH_SIZE]
+                   [-v VERBOSE] [-e ENV_PATH]
+```
