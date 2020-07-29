@@ -2,7 +2,10 @@
 from src.pipeline.pipeline import Pipeline
 from src.msa.transform import Compose, OccupancyTrim, OccupancyFilter
 from src.msa.msa import MSA, Muscle
-from src.hmm.hmmer import HMMBuild, HMMSearch
+from src.hmm.hmmer import HMMBuild
+from src.hmm.hmmsearch import HMMSearch
+from src.hmm.hmmsearch import SequenceHits
+from src.hmm.hmmsearch import DomainHits
 from src.hmm.hmm import HMM
 from src.dataset import LinClust
 from src.dataset import Fasta
@@ -310,19 +313,61 @@ class Batch(Pipeline):
             'memory': max_memory
         })
 
+        # Initialize list of tblout paths
+        tblout_paths = list()
         # Search HMM models against UniProt
-        time_run, _ = benchmark(
+        time_run, (tblout_paths, domtblout_paths) = benchmark(
             fn=self.search_hmm_dataset,
             hmm_path=lib_path,
             clusters_path=clusters_path,
             target_dataset=self.uniprot,
-            e_value=self.uniprot_e_value,
+            e_value=1000,
             z_score=uniprot_length,
             n_cores=num_cores,
             client=client
         )
 
-        # TODO Check for search results in UniProt
+        # Close cluster interface
+        self.close_client(cluster, client)
+
+        # Instantiate new cluster with just one core
+        cluster, client = self.get_client({'cores': 1})
+
+        # Check for search results in UniProt
+        time_run, (seq_scores, seq_hits, dom_scores, dom_hits) = benchmark(
+            fn=self.parse_hmm_hits,
+            tblout_paths=tblout_paths,
+            domtblout_paths=domtblout_paths,
+            e_value=self.uniprot_e_value,
+            client=client
+        )
+
+        # Define cluster names in sequences and domain hits
+        intersect_uniprot = set(seq_hits.keys()) | set(dom_hits.keys())
+        # Loop through each cluster
+        for cluster_name in cluster_names:
+            # Check if cluster name is among the ones intersecting UniProt
+            if cluster_name in intersect_uniprot:
+                # Define cluster path
+                cluster_path = os.path.join(clusters_path, cluster_name)
+                # Define target path
+                target_path = os.path.join(uniprot_path, cluster_name)
+                # Move cluster to uniprot directory
+                shutil.move(cluster_path, target_path)
+                # Remove cluster name from the ones kept
+                cluster_names.remove(cluster_name)
+
+        # Verbose log
+        if verbose:
+            print((
+                'Search against UniProt done ',
+                'in {:.0f} seconds: '.format(time_run),
+                '{:d} clusters have been kept '.format(len(cluster_names)),
+                'due to intersections with UniProt'
+            ))
+
+        # Close cluster interface
+        self.close_cluster(cluster, client)
 
         # Update timers
         time_end = time()
@@ -950,26 +995,34 @@ class Batch(Pipeline):
         return lib_path, lib_length, in_library
 
     # Search HMM against a target dataset
-    def search_hmm_dataset(self, hmm_path, clusters_path, target_dataset, e_value, z_score, n_cores, client, verbose=False):
+    def search_hmm_dataset(self, hmm_path, target_dataset, e_value, z_score, n_cores, client, verbose=False):
         """ Search HMM model/library against target dataset
 
         Searches a HMM model or a HMM library (which are handled in the same
-        way by the search script) against a target dataset, using hmmsearch
-        script. Makes a single .tsv table with all the results for each cluster.
+        way by the search script) against a target dataset, hence against a
+        list of chunks, using hmmsearch in a distributed manner.
+
+        Returns two lists: one for TBLOUT files (i.e. sequence hits) and one for
+        DOMTBLOUT files (i.e. domain hits). Notice that returned lists contain
+        paths to tabular files which will remain into temporary directory if not
+        manually deleted.
 
         Args
         hmm_path (str)          Path to searched HMM model
-        clusters_path (str)     Path where search results file must be stored
         target_dataset (list)   List of target dataset chunks
         e_value (float)         E-value to define a match significant
         z_score (int)           Z-score defining whole dataset length
         n_cores (int)           Number of cores available per job
         client (Client)         Client used to spawn jobs on cluster
         verbose (bool)          Whether to print verbose log or not
+
+        Return
+        (list)                  List of TBLOUT tabular output files
+        (list)                  List of DOMTBLOUT tabular output files
         """
         # Verbose log
         if verbose:
-            print('Searching HMM models', end=' ')
+            print('Searching HMM model/library')
 
         # Initialize futures
         futures = list()
@@ -991,124 +1044,130 @@ class Batch(Pipeline):
             # Store future
             futures.append(future)
 
-        # Retrieve results
+        # Retrieve results (tuples containing paths to tabluar output files)
         results = client.gather(futures)
-
-        # Define results path (DOMTBLOUT)
-        results_path = os.path.join(clusters_path, 'results.dom')
-        # Open results file
-        results_file = open(results_path, 'w')
-        # Loop through each result
-        for i in range(len(results)):
-            # Define path to current DOMTBLOUT file
-            out_path, tblout_path, domtblout_path, pfamtblout_path = tuple(results[i])
-            # DEBUG
-            print('Retrieved files:')
-            print('\tOUT path:', out_path)
-            print('\tTBLOUT path:', tblout_path)
-            print('\tDOMTBLOUT path:', domtblout_path)
-            print('\tPFAMTBLOUT path:', pfamtblout_path)
-            # Open DOMTBLOUT path
-            with open(domtblout_path, 'r') as domtblout_file:
-                # Loop through each line in DOMTBLOUT file
-                for domtblout_line in domtblout_file:
-                    # Copy line to results file
-                    results_file.write(domtblout_line)
-            # Remove output DOMTBLOUT file
-            os.remove(domtblout_path)
+        # Return retrieved TBLOUT and DOMTBLOUT lists
+        return zip(*results)
 
     @staticmethod
-    def search_hmm_chunk(hmm_path, chunk_path, e_value, z_score, n_cores, hmm_search):
-        """ Search HMM against a single dataset (chunk)
+    def parse_search_scores(tblout_cls, tblout_path, e_value, min_bits=25.0, max_bits=999999.99):
+        # Initialize scores dictionary
+        scores = dict()
+        # Parse hmmsearch result
+        with tblout_cls(tblout_path) as table:
+            # Retrieve scores
+            scores = table.get_scores(
+                e_value=e_value,
+                min_bits=min_bits,
+                max_bits=max_bits
+            )
+        # Return retrieved scores
+        return scores
+
+    @staticmethod
+    def parse_search_hits(tblout_cls, tblout_path, scores):
+        # Initialize hits dictionary
+        scores = dict()
+        # Parse hmmsearch result
+        with tblout_cls(tblout_path) as table:
+            # Retrieve hits
+            scores = table.get_hits(scores)
+        # Return retrieved hits
+        return scores
+
+    # Retrieve HMM hits from a list of tabular output files
+    def parse_hmm_hits(self, tblout_paths, domtblout_paths, e_value, client):
+        """ Retrieve sequence hits from list tabular output files
 
         Args
-        hmm_path (str)          Path to input HMM model
-        chunk_path (str)        Path to dataset chunk serach HMM against
-        e_value (float)         E-value to define a match significant
-        z_score (int)           Z-score defining whole dataset length
-        n_cores (int)           Number of cores allocalble to run hmmsearch
-        hmm_search (HMMSearch)  Instance of hmmsearch object
+        tblout_paths (list)         List of strings representing paths to
+                                    tabular TBLOUT files
+        domtblout_paths (list)      List of strings representing paths to
+                                    tabular DOMTBLOUT files
+        e_value (float)             E-value threshold for determining scores
+        client(Client)              Dask Client used to submit distributed jobs
 
         Return
-        (str)                   Path where temporary file holding DOMTBLOUT
-                                results is stored
+        (dict)      Dictionary mapping cluster name to sequences bit-score thresholds
+        (dict)      Dictionary mapping cluster name to domains bit-score thresholds
+        (dict)      Dictionary mapping cluster name to sequences hits
+        (dict)      Dictionary mapping cluster name to domains hits
         """
 
-        # Define if input chunk is gzipped
-        chunk_gzip = is_gzip(chunk_path)
-        # Case input file is compressed
-        if chunk_gzip:
-            # Get file extension from chunk path
-            _, chunk_ext = os.path.splitext(chunk_path)
-            # Remove .gz extension
-            chunk_ext = re.sub(r'\.gz$', '', chunk_ext)
-            # Unzip target path and overwrite given target dataset
-            chunk_path = gunzip(in_path=chunk_path, out_suffix=chunk_ext)
+        # Initialize futures
+        futures = list()
+        # Loop through each sequence TBLOUT file
+        for tblout_path in tblout_paths:
+            # Distribute scores retrieval function
+            futures.append(client.submit(
+                func=self.parse_search_scores,
+                tblout_cls=SequenceHits,
+                tblout_path=tblout_path,
+                e_value=e_value,
+                min_bits=25.0,
+                max_bits=999999.99
+            ))
+        # Gather results
+        results = client.gather(futures)
+        # Merge all retrieved scores
+        sequence_scores = SequenceHits.merge_scores(results)
 
-        # Initialize output temporary file path
-        out_path = NamedTemporaryFile(delete=False, suffix='.out').name
-        # Initialize tblout temporary file path
-        tblout_path = NamedTemporaryFile(delete=False, suffix='.tblout').name
-        # Initialize domtblout temporary file path
-        domtblout_path = NamedTemporaryFile(delete=False, suffix='.domtblout').name
-        # Initialize pfamtblout temporary file path
-        pfamtblout_path = NamedTemporaryFile(delete=False, suffix='.pfamtblout').name
-        # Run hmmsearch against given chunk
-        hmm_search.run(
-            # Path to searched HMM model/library file
-            hmm_path=hmm_path,
-            # Path to sequences target dataset
-            target_path=chunk_path,
-            # Path to search output
-            out_path=out_path,
-            # Path to per-sequence output table
-            tblout_path=tblout_path,
-            # Path to per-domain output table
-            domtblout_path=domtblout_path,
-            # Path to per-pfam-domain output table
-            pfamtblout_path=pfamtblout_path,
-            # Define number of CPUs allocated
-            num_cpus=n_cores,
-            # Set e-value
-            seq_e=e_value,
-            # Set z-score
-            seq_z=z_score
-        )
+        # Reinitialize futures
+        futures = list()
+        # Loop through each TBLOUT file
+        for tblout_path in tblout_paths:
+            # Distribute hits retrieval function
+            futures.append(client.submit(
+                func=self.parse_search_hits,
+                tblout_cls=SequenceHits,
+                tblout_path=tblout_path,
+                e_value=e_value,
+                min_bits=25.0,
+                max_bits=999999.99
+            ))
+        # Gather results (list of dictionaries mapping clusters to sequences)
+        results = client.gather(futures)
+        # Merge all retrieved dictionaries
+        sequence_hits = SequenceHits.merge_hits(results)
 
-        # Remove unzipped temporary file
-        if chunk_gzip:
-            os.remove(chunk_path)
+        # Initialize futures
+        futures = list()
+        # Loop through each sequence DOMTBLOUT file
+        for domtblout_path in domtblout_paths:
+            # Distribute scores retrieval function
+            futures.append(client.submit(
+                func=self.parse_search_scores,
+                tblout_cls=DomainHits,
+                tblout_path=domtblout_path,
+                e_value=e_value,
+                min_bits=25.0,
+                max_bits=999999.99
+            ))
+        # Gather results
+        results = client.gather(futures)
+        # Merge all retrieved scores
+        domain_scores = DomainHits.merge_scores(results)
 
-        # Return domtblout path
-        return out_path, tblout_path, domtblout_path, pfamtblout_path
+        # Reinitialize futures
+        futures = list()
+        # Loop through each DOMTBLOUT file
+        for domtblout_path in domtblout_paths:
+            # Distribute hits retrieval function
+            futures.append(client.submit(
+                func=self.parse_search_hits,
+                tblout_cls=DomainHits,
+                tblout_path=domtblout_path,
+                e_value=e_value,
+                min_bits=25.0,
+                max_bits=999999.99
+            ))
+        # Gather results (list of dictionaries mapping clusters to sequences)
+        results = client.gather(futures)
+        # Merge all retrieved dictionaries
+        domain_hits = DomainHits.merge_hits(results)
 
-    # Search HMM search results against UniProt
-    def check_hmm_uniprot(self, cluster_names, clusters_path, verbose=False):
-        """ Check HMM search against UniProt results
-
-        Args
-        cluster_names (set)     Set of cluster names which must be searched
-        clusters_path (str)     Path where results file can be found
-        verbose (bool)          Whether to print out verbose log or not
-
-        Return
-        (set)                   Set of cluster names not found in UniProt
-        """
-        # Verbose log
-        if verbose:
-            print('Checking matches against UniProt', end=' ')
-            print('for {:d} clusters'.format(len(cluster_names)), end=' ')
-            print('at {:s}'.format(clusters_path))
-
-        # Define path to results file
-        results_path = os.path.join(clusters_path, 'results.dom')
-        # Ensure that results file actually exists
-        if not os.path.exists(results_path):
-            # Raise new exception and interrupt execution
-            raise FileNotFoundError(' '.join([
-                'UniProt DOMTBLOUT file not found',
-                'at {:s}: exiting'.format(results_path)
-            ]))
+        # Return sequence scores and sequence hits
+        return sequence_scores, domain_scores, sequence_hits, domain_hits
 
 
 # Unit testing
@@ -1151,7 +1210,7 @@ if __name__ == '__main__':
     # Initialize new hmmsearch script
     hmm_search = HMMSearch()
     # Search HMM against first UniProt chunk
-    out_path, tblout_path, domtblout_path, pfamtblout_path = Batch.search_hmm_chunk(
+    tblout_path, domtblout_path = Batch.search_hmm_chunk(
         hmm_path=hmm_path,
         chunk_path=chunk_path,
         hmm_search=hmm_search,
@@ -1161,7 +1220,15 @@ if __name__ == '__main__':
     )
     # Print output paths
     print('Files retrieved from HMMSEARCH:')
-    print('  {:s}'.format(out_path))
     print('  {:s}'.format(tblout_path))
     print('  {:s}'.format(domtblout_path))
-    print('  {:s}'.format(pfamtblout_path))
+
+    # Initialize sequence scores
+    seq_scores = Batch.get_sequence_scores(tblout_path, e_value=0.1)
+    # Print sequence scores dictionary
+    print(json.dumps(seq_scores, indent=2))
+
+    # # Initialize domain scores
+    # dom_scores = Batch.get_domain_scores(domtblout_path, seq_scores, e_value=0.1)
+    # # Print domains scores dictionary
+    # print(json.dumps(dom_scores, indent=2))

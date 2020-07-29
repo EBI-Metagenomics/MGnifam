@@ -2,6 +2,7 @@
 import mysql.connector as dbms
 import json
 import os
+import re
 
 
 class MGnifam(object):
@@ -61,10 +62,30 @@ class MGnifam(object):
         # Search for dead MGnifam ids
         dead_cursor.execute('SELECT mgnifam_id FROM dead_mgnifam')
 
-        # Initialize maximum MGnifam id
-        next_id = -1
-        # Loop through each MGnifam id
-        raise NotImplementedError
+        # Initialize maximum MGDUF id
+        mgduf_max = -1
+        # Define list of all results cursors
+        cursor_list = [alive_cursor, dead_cursor]
+        # Loop through each query result
+        for cursor in cursor_list:
+            # Loop through each retrieved row
+            for row in cursor:
+                # Retrieve current MGDUF
+                mgduf_str = row[0]
+                # Check if current MGDUF matches expected format
+                match = re.search(r'^MGDUF(\d+)$', mgduf_str)
+                # Case retrieved string does not match expected format
+                if not match:
+                    continue  # Skip to next row
+                # Retrieve MGDUF number from string
+                mgduf_num = int(match.group(1))
+                # Case current MGDUF number is greater than current maximum
+                if mgduf_num > mgduf_max:
+                    # Update current maximum MGDUF number
+                    mgduf_max = mgduf_num
+
+        # Return maximum MGDUF number + 1
+        return 'MGDUF{:d}'.format(mgduf_max + 1)
 
 
 # Unit testing
