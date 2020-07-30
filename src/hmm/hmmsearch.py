@@ -653,6 +653,8 @@ if __name__ == '__main__':
             # Print either current query name and target name
             print(curr_qname, curr_tname)
 
+    print('OK')
+
     # Remove temporary files
     os.remove(tblout_path)
     os.remove(domtblout_path)
