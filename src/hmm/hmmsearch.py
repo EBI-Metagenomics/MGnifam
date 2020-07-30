@@ -3,6 +3,7 @@ from src.hmm.hmmer import HMMER
 from src.dataset import Fasta
 from glob import iglob
 import subprocess
+import traceback
 import tempfile
 import os
 import re
@@ -166,11 +167,15 @@ class Hits(object):
         # Remove inner file reference
         del self.file
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, exc_type, exc_value, tb):
         # Close and delete inner file buffer
         self.close()
-        # Return itself
-        return self
+        # Case exception is set
+        if exc_type is not None:
+            # Get traceback
+            traceback.print_exception(exc_type, exc_value, tb)
+            # return False # uncomment to pass exception through
+        return True
 
     @staticmethod
     def iterator(iterable):
@@ -246,7 +251,7 @@ class Hits(object):
                 for j in range(len(bounds))
             ]
 
-    def get_iterator(self):
+    def iterate(self):
         """ Return iterator through tabular results file rows
 
         Return
@@ -263,11 +268,13 @@ class Hits(object):
                 'No file opened: inner file must be opened with either '
                 '`open(...)` method or `with` statement!'
             ))
+        # Restart file from beginning
+        self.file.seek(0)
         # Return iterator over input tabular results file
         return self.iterator(self.file)
 
     def __iter__(self):
-        return self.get_iterator()
+        return self.iterate()
 
 
 # Implement sequence hits table parser
@@ -281,9 +288,9 @@ class SequenceHits(Hits):
         'bit_score': 5
     }
 
-    def get_iterator(self):
+    def iterate(self):
         # Loop through each row in tabular file
-        for row in super().get_iterator():
+        for row in super().iterate():
             # Retrieve row dictionary (each row value is a tuple (key, value))
             row = {key: row[index][1] for key, index in self.columns.items()}
             # Yield current row
@@ -323,7 +330,7 @@ class SequenceHits(Hits):
         scores = dict()
 
         # Loop through each row in current file
-        for row in self:
+        for row in self.iterate():
 
             # Retrieve query name
             curr_qname = str(row['query_name'])
@@ -437,13 +444,13 @@ class SequenceHits(Hits):
         hits = dict()
 
         # Loop through each row in inner tabular results file
-        for row in self:
+        for row in self.iterate():
 
             # Retrieve required fields form current row
-            curr_qname = row['query_name']
-            curr_tname = row['target_name']
-            curr_eval = row['e_value']
-            curr_bits = row['bit_score']
+            curr_qname = str(row['query_name'])
+            curr_tname = str(row['target_name'])
+            curr_eval = float(row['e_value'])
+            curr_bits = float(row['bit_score'])
 
             # Retrieve scores for current query name
             tc, nc, ga = scores[curr_qname]
@@ -586,7 +593,7 @@ if __name__ == '__main__':
     # Read TBLOUT file
     with SequenceHits(tblout_path) as hits:
         # Loop through each hit
-        for i, hit in enumerate(hits):
+        for i, hit in enumerate(hits.iterate()):
             # Print only the first 3 hits
             if i > 3:
                 continue
@@ -601,7 +608,7 @@ if __name__ == '__main__':
     # Read DOMTBLOUT file
     with DomainHits(domtblout_path) as hits:
         # Loop through each hit
-        for i, hit in enumerate(hits):
+        for i, hit in enumerate(hits.iterate()):
             # Print only the first 3 hits
             if i > 3:
                 continue
@@ -613,11 +620,9 @@ if __name__ == '__main__':
 
     # Test sequneces scores retrieval
     with SequenceHits(tblout_path) as hits:
+
         # Retrieve scores
         scores = hits.get_scores(e_value=0.1)
-        # Retrieve sequences
-        sequences = hits.get_hits(scores)
-
         # Show sequence scores
         print('Retrieved sequence scores (e-value set to 0.1): ')
         # Loop through each query name
@@ -625,6 +630,8 @@ if __name__ == '__main__':
             # Print eithr query name and its scores
             print(curr_qname, curr_scores)
 
+        # Retrieve sequences
+        sequences = hits.get_hits(scores)
         # Show retrieved sequences
         print('Retrieved sequence hits: ')
         # Loop through each retrieved sequence
@@ -634,11 +641,9 @@ if __name__ == '__main__':
 
     # Test sequneces scores retrieval
     with DomainHits(domtblout_path) as hits:
+
         # Retrieve scores
         scores = hits.get_scores(e_value=0.1)
-        # Retrieve sequences
-        domains = hits.get_hits(scores)
-
         # Show sequence scores
         print('Retrieved domain scores (e-value set to 0.1): ')
         # Loop through each query name
@@ -646,14 +651,14 @@ if __name__ == '__main__':
             # Print eithr query name and its scores
             print(curr_qname, curr_scores)
 
+        # Retrieve sequences
+        domains = hits.get_hits(scores)
         # Show retrieved sequences
         print('Retrieved domain hits: ')
         # Loop through each retrieved sequence
         for curr_qname, curr_tname in domains:
             # Print either current query name and target name
             print(curr_qname, curr_tname)
-
-    print('OK')
 
     # Remove temporary files
     os.remove(tblout_path)
