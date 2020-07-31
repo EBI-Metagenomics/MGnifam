@@ -10,8 +10,7 @@ from src.hmm.hmm import HMM
 from src.dataset import LinClust
 from src.dataset import Fasta
 from src.disorder import MobiDbLite
-from src.disorder import compute_threshold, compute_comp_bias
-from src.utils import benchmark, is_gzip, open_file, gunzip, as_bytes
+from src.utils import benchmark, is_gzip, gunzip, as_bytes
 from tempfile import NamedTemporaryFile
 from glob import iglob
 from time import time
@@ -184,16 +183,20 @@ class Batch(Pipeline):
             verbose=verbose
         )
 
-        # DEBUG
-        print('There are {:d} clusters'.format(len(bias_below)), end=' ')
-        print('below compositional bias threshold and', end=' ')
-        print('{:d} above compositional bias threshold'.format(len(bias_above)))
+        # Keep only cluster whose bias is above given threshold
+        cluster_names = bias_below
+        # Loop through cluster members
+        for cluster_name in bias_above:
+            # Remove cluster name from clusters dictionary
+            cluster_members.pop(cluster_name)
 
         # Verbose log
         if verbose:
             print('Compositional bias computed', end=' ')
             print('for {:d} clusters'.format(len(cluster_members)), end=' ')
             print('in {:.0f} seconds'.format(time_run))
+
+        return
 
         # Make SEED alignments
         time_run, _ = benchmark(
@@ -254,10 +257,10 @@ class Batch(Pipeline):
             print('HMM library done', end=' ')
             print('for {:d} clusters'.format(len(cluster_names)), end=' ')
             print('at {:s}'.format(lib_path), end=' ')
-            print('in {:.0f}'.format(time_run))
+            print('in {:.0f} seconds'.format(time_run))
 
-        # Get UniProt size
-        time_run, (uniprot_longest, uniprot_length) = benchmark(
+        # Get longest sequence and its legth, as well as UniProt dataset size
+        time_run, (longest_seq, longest_len, uniprot_len) = benchmark(
             fn=self.get_longest,
             target_dataset=self.uniprot,
             client=client
@@ -266,10 +269,9 @@ class Batch(Pipeline):
         # Verbose log
         if verbose:
             print('Retrieved UniProt longest sequence:')
-            print(uniprot_longest)
-            print('of length {:d}'.format(len(uniprot_longest)), end=' ')
+            print('of length {:d}'.format(longest_len), end=' ')
             print('in {:.0f} seconds'.format(time_run), end=' ')
-            print('among {:d} sequences'.format(uniprot_length))
+            print('among {:d} sequences'.format(uniprot_len))
 
         # Close previous client
         self.close_client(cluster, client)
@@ -281,14 +283,14 @@ class Batch(Pipeline):
         # Get minimum required memory per CPU
         req_memory = HMMSearch.get_memory(
             model_len=lib_length,
-            longest_seq=len(uniprot_longest)
+            longest_seq=longest_len
         )
         # Define maximum number of CPUs (cores) allocable to run hmmsearch
         num_cores = HMMSearch.get_cpus(
             model_len=lib_length,
             max_memory=max_memory,
             max_cpus=max_cores,
-            longest_seq=len(uniprot_longest)
+            longest_seq=longest_len
         )
 
         # Check if memory is sufficient
@@ -319,10 +321,9 @@ class Batch(Pipeline):
         time_run, (tblout_paths, domtblout_paths) = benchmark(
             fn=self.search_hmm_dataset,
             hmm_path=lib_path,
-            clusters_path=clusters_path,
             target_dataset=self.uniprot,
             e_value=1000,
-            z_score=uniprot_length,
+            z_score=uniprot_len,
             n_cores=num_cores,
             client=client
         )
@@ -367,7 +368,7 @@ class Batch(Pipeline):
             ))
 
         # Close cluster interface
-        self.close_cluster(cluster, client)
+        self.close_client(cluster, client)
 
         # Update timers
         time_end = time()
@@ -444,6 +445,9 @@ class Batch(Pipeline):
         # Retrieve results
         results = client.gather(futures)
 
+        # DEBUG
+        print(results)
+
         # Initialize longest sequence and its length
         longest_seq, longest_len = '', 0
         # Initialize dataset length
@@ -453,7 +457,7 @@ class Batch(Pipeline):
             # Get either longest sequence and dataset length
             chunk_longest_seq, chunk_longest_len, chunk_size = results[i]
             # Case current sequence is longer than previous longest
-            if longest_len < len(chunk_longest_len):
+            if longest_len < chunk_longest_len:
                 # Update longest sequences
                 longest_seq = chunk_longest_seq
                 longest_len = chunk_longest_len
@@ -626,7 +630,10 @@ class Batch(Pipeline):
             futures[cluster_name] = future
 
         # Retrieve results
-        results = client.gather([*futures.values()])
+        results = client.gather(futures)
+
+        # Debug
+        print(json.dumps(results, indent=2))
 
         # Initialize set of clusters below and above threshold
         bias_below, bias_above = set(), set()
@@ -635,9 +642,9 @@ class Batch(Pipeline):
         # Retrieve compositional bias threshold is inclusive or not
         inclusive = self.comp_bias_inclusive
         # Loop through each cluster name in results
-        for i, cluster_name in enumerate(futures.keys()):
+        for cluster_name in results.keys():
             # Get current compositional bias value
-            curr_bias = results[i]
+            curr_bias = results[cluster_name]
             # Case compositional bias threshold is inclusive
             if (curr_bias >= threshold) and inclusive:
                 # Add cluster name to the above threshold set
@@ -689,15 +696,15 @@ class Batch(Pipeline):
         (float)                 Compositional bias score
         """
         # Make predictions running MobiDB Lite
-        predictions = mobidb.run(sequences=fasta_sequences)
+        predictions = mobidb.run(fasta_sequences=fasta_sequences)
         # Apply threshold over predictions
-        predictions = compute_threshold(
+        predictions = mobidb.apply_threshold(
             sequences=predictions,
             threshold=pred_threshold,
             inclusive=pred_inclusive
         )
         # Compute and return compositional bias
-        return compute_comp_bias(predictions)
+        return mobidb.compute_bias(predictions)
 
     # Make SEED alignments
     def make_seed_alignments(self, cluster_members, fasta_sequences, clusters_path, client, verbose=False):
@@ -946,7 +953,7 @@ class Batch(Pipeline):
             print('out of {:d} clusters'.format(len(cluster_names)))
 
         # Initialize output HMM library path
-        lib_path = os.path.join(clusters_path, 'HMMlibrary')
+        lib_path = os.path.join(clusters_path, 'HMMlib')
         # Open file in write mode
         lib_file = open(lib_path, 'w')
 
@@ -993,6 +1000,70 @@ class Batch(Pipeline):
 
         # Return HMM library path and length
         return lib_path, lib_length, in_library
+
+    @staticmethod
+    def search_hmm_chunk(hmm_path, chunk_path, e_value, z_score, n_cores, hmm_search):
+        """ Search HMM against a single dataset (chunk)
+
+        Args
+        hmm_path (str)          Path to input HMM model
+        chunk_path (str)        Path to dataset chunk serach HMM against
+        e_value (float)         E-value to define a match significant
+        z_score (int)           Z-score defining whole dataset length
+        n_cores (int)           Number of cores allocalble to run hmmsearch
+        hmm_search (HMMSearch)  Instance of hmmsearch object
+        Return
+        (str)                   Path where temporary file holding DOMTBLOUT
+                                results is stored
+        """
+
+        # Define if input chunk is gzipped
+        chunk_gzip = is_gzip(chunk_path)
+        # Case input file is compressed
+        if chunk_gzip:
+            # Get file extension from chunk path
+            _, chunk_ext = os.path.splitext(chunk_path)
+            # Remove .gz extension
+            chunk_ext = re.sub(r'\.gz$', '', chunk_ext)
+            # Unzip target path and overwrite given target dataset
+            chunk_path = gunzip(in_path=chunk_path, out_suffix=chunk_ext)
+
+        # # Initialize output temporary file path
+        # out_path = NamedTemporaryFile(delete=False, suffix='.out').name
+        # Initialize tblout temporary file path
+        tblout_path = NamedTemporaryFile(delete=False, suffix='.tblout').name
+        # Initialize domtblout temporary file path
+        domtblout_path = NamedTemporaryFile(delete=False, suffix='.domtblout').name
+        # # Initialize pfamtblout temporary file path
+        # pfamtblout_path = NamedTemporaryFile(delete=False, suffix='.pfamtblout').name
+        # Run hmmsearch against given chunk
+        hmm_search.run(
+            # Path to searched HMM model/library file
+            hmm_path=hmm_path,
+            # Path to sequences target dataset
+            target_path=chunk_path,
+            # # Path to search output
+            # out_path=out_path,
+            # Path to per-sequence output table
+            tblout_path=tblout_path,
+            # Path to per-domain output table
+            domtblout_path=domtblout_path,
+            # # Path to per-pfam-domain output table
+            # pfamtblout_path=pfamtblout_path,
+            # Define number of CPUs allocated
+            num_cpus=n_cores,
+            # Set e-value
+            seq_e=e_value,
+            # Set z-score
+            seq_z=z_score
+        )
+
+        # Remove unzipped temporary file
+        if chunk_gzip:
+            os.remove(chunk_path)
+
+        # Return domtblout path
+        return tblout_path, domtblout_path
 
     # Search HMM against a target dataset
     def search_hmm_dataset(self, hmm_path, target_dataset, e_value, z_score, n_cores, client, verbose=False):
@@ -1046,8 +1117,11 @@ class Batch(Pipeline):
 
         # Retrieve results (tuples containing paths to tabluar output files)
         results = client.gather(futures)
+        # Define output lists
+        tblout_list = [results[i][0] for i in range(len(results))]
+        domtblout_list = [results[i][1] for i in range(len(results))]
         # Return retrieved TBLOUT and DOMTBLOUT lists
-        return zip(*results)
+        return tblout_list, domtblout_list
 
     @staticmethod
     def parse_search_scores(tblout_cls, tblout_path, e_value, min_bits=25.0, max_bits=999999.99):
