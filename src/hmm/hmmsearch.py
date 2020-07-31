@@ -140,17 +140,20 @@ class Hits(object):
     attributes iteratively. However, not all the attributes are returned, only
     the ones needed in further computations.
     """
+
+    # Constructor
     def __init__(self, path):
         """ Constructor
 
         Args
-        path (str)      Path to file storing tabular output results of hmmsearch
+        path (str)      Path to file storing tabular output results of
+                        hmmsearch
         """
         # Store input path
         self.path = path
 
     def open(self):
-        # Open inner file
+        # Create new inner file buffer
         self.file = open(self.path, 'r')
         # Return file reference
         return self.file
@@ -172,9 +175,9 @@ class Hits(object):
         self.close()
         # Case exception is set
         if exc_type is not None:
-            # Get traceback
-            traceback.print_exception(exc_type, exc_value, tb)
-            # return False # uncomment to pass exception through
+            # # Get traceback
+            # traceback.print_exception(exc_type, exc_value, tb)
+            return False # uncomment to pass exception through
         return True
 
     @staticmethod
