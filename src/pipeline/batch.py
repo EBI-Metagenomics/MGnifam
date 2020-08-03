@@ -11,11 +11,13 @@ from src.dataset import LinClust
 from src.dataset import Fasta
 from src.disorder import MobiDbLite
 from src.utils import benchmark, is_gzip, gunzip, as_bytes
+from subprocess import CalledProcessError
 from tempfile import NamedTemporaryFile
-from glob import iglob
+from glob import iglob, glob
 from time import time
 import shutil
 import json
+import math
 import os
 import re
 
@@ -123,10 +125,10 @@ class Batch(Pipeline):
 
         # Initialize sub-directories
         # TODO Initialize cluster directories
-        bias_path, noaln_path, discard_path, uniprot_path = self.init_subdir(clusters_path)
+        bias_path, noaln_path, uniprot_path = self.init_subdir(clusters_path)
 
         # Initialize new cluster
-        cluster, client = self.get_client({'cores': 1})
+        cluster, client = self.get_client(dict(cores=1))
         # Request jobs
         cluster.adapt(minimum=min_jobs, maximum=max_jobs)
 
@@ -191,11 +193,12 @@ class Batch(Pipeline):
         )
 
         # Keep only clusters whose bias is below threshold
-        for cluster_name in cluster_members:
-            # Case cluster is in cluster names
-            if cluster_name not in cluster_names:
-                # Otherwise, remove cluster name
-                cluster_members.pop(cluster_name)
+        cluster_members = {
+            cluster_name: sequences_acc
+            for cluster_name, sequences_acc
+            in cluster_members.items()
+            if cluster_name in set(cluster_names)
+        }
 
         # Verbose log
         if verbose:
@@ -260,6 +263,7 @@ class Batch(Pipeline):
         # Verbose log
         if verbose:
             print('HMM library done', end=' ')
+            print('with maximum size {:d}'.format(lib_length), end=' ')
             print('for {:d} clusters'.format(len(cluster_names)), end=' ')
             print('at {:s}'.format(lib_path), end=' ')
             print('in {:.0f} seconds'.format(time_run))
@@ -273,7 +277,7 @@ class Batch(Pipeline):
 
         # Verbose log
         if verbose:
-            print('Retrieved UniProt longest sequence:')
+            print('Retrieved UniProt longest sequence', end=' ')
             print('of length {:d}'.format(longest_len), end=' ')
             print('in {:.0f} seconds'.format(time_run), end=' ')
             print('among {:d} sequences'.format(uniprot_len))
@@ -282,7 +286,7 @@ class Batch(Pipeline):
         self.close_client(cluster, client)
 
         # Get maximum number of cores
-        max_cores = self.cluster_kwargs.get('cores')
+        max_cores = int(self.cluster_kwargs.get('cores'))
         # Get maximum available memory per job
         max_memory = as_bytes(self.cluster_kwargs.get('memory'))
         # Get minimum required memory per CPU
@@ -303,25 +307,24 @@ class Batch(Pipeline):
             # Raise new memory exception
             raise MemoryError(' '.join([
                 'Unable to start HMM search against target dataset:',
-                'minimum required memory is {:.2f} GB'.format(float(req_memory // 1e09)),
-                'while maximum allocable is {:.2f} GB'.format(float(max_memory // 1e09))
+                'minimum required memory is {:d} GB'.format(math.ceil(req_memory / 1e09)),
+                'while maximum allocable is {:d} GB'.format(math.floor(max_memory / 1e09))
             ]))
 
         # Verbose log
         if verbose:
             print('Making HMM search against target dataset:', end=' ')
-            print('minimum required memory is {:.2f} GB'.format(float(req_memory // 1e09)), end=' ')
-            print('while maximum allocable is {:.2f} GB'.format(float(max_memory // 1e09)), end=' ')
+            print('minimum required memory is {:d} GB'.format(math.ceil(req_memory / 1e09)), end=' ')
+            print('while maximum allocable is {:d} GB'.format(math.floor(max_memory / 1e09)), end=' ')
             print('on {:d} cores'.format(num_cores))
 
         # Instantiate new cluster with given parameters
-        cluster, client = self.get_client({
-            'cores': num_cores,
-            'memory': max_memory
-        })
+        cluster, client = self.get_client(dict(cores=num_cores))
+        # Request jobs
+        cluster.adapt(minimum=min_jobs, maximum=max_jobs)
 
         # Initialize list of tblout paths
-        tblout_paths = list()
+        tblout_paths, domtblout_paths = list(), list()
         # Search HMM models against UniProt
         time_run, (tblout_paths, domtblout_paths) = benchmark(
             fn=self.search_hmm_dataset,
@@ -330,14 +333,17 @@ class Batch(Pipeline):
             e_value=1000,
             z_score=uniprot_len,
             n_cores=num_cores,
-            client=client
+            client=client,
+            verbose=verbose
         )
 
         # Close cluster interface
         self.close_client(cluster, client)
 
         # Instantiate new cluster with just one core
-        cluster, client = self.get_client({'cores': 1})
+        cluster, client = self.get_client(dict(cores=1))
+        # Request jobs
+        cluster.adapt(minimum=min_jobs, maximum=max_jobs)
 
         # Check for search results in UniProt
         time_run, (seq_scores, seq_hits, dom_scores, dom_hits) = benchmark(
@@ -407,11 +413,10 @@ class Batch(Pipeline):
         Return
         (str)                   Path to bias/ subdirectory
         (str)                   Path to noaln/ subdirectory
-        (str)                   Path to discard/ subdirectory
         (str)                   Path to uniprot/ subdirectory
         """
         # Initialize list of sub-directories
-        sub_paths = ['bias', 'noaln', 'discard', 'uniprot']
+        sub_paths = ['bias', 'noaln', 'uniprot']
         # Loop through each sub-directory path
         for i, sub_path in enumerate(sub_paths):
             # Make full sub-directory path
@@ -449,9 +454,6 @@ class Batch(Pipeline):
 
         # Retrieve results
         results = client.gather(futures)
-
-        # DEBUG
-        print(results)
 
         # Initialize longest sequence and its length
         longest_seq, longest_len = '', 0
@@ -661,9 +663,6 @@ class Batch(Pipeline):
         # Retrieve results
         results = client.gather(futures)
 
-        # Debug
-        print(json.dumps(results, indent=2))
-
         # Initialize set of clusters below and above threshold
         bias_below, bias_above = set(), set()
         # Retrieve compositional bias threshold
@@ -684,8 +683,8 @@ class Batch(Pipeline):
             cluster_bias = results.get(cluster_name, 1.0)
 
             # Write bias score to file
-            with open(os.path.join(clusters_path, 'BIAS'), 'w') as file:
-                file.write(cluster_bias)
+            with open(os.path.join(cluster_path, 'BIAS'), 'w') as file:
+                file.write(str(cluster_bias))
 
             # Define target path if bias is too high
             target_path = os.path.join(bias_path, cluster_name)
@@ -777,7 +776,7 @@ class Batch(Pipeline):
         # Verbose log
         if verbose:
             print('Making SEED alignments', end=' ')
-            print('for {:d}'.format(len(cluster_members)), end=' ')
+            print('for {:d} clusters'.format(len(cluster_members)), end=' ')
             print('at {:s}'.format(clusters_path))
 
         # Initialize futures
@@ -986,6 +985,10 @@ class Batch(Pipeline):
     def make_hmm_library(self, cluster_names, clusters_path, verbose=False):
         """ Concatenate every HMM mode in one HMM library
 
+        If a cluster subfolder is not found: skip it
+        If a cluster subfolder is found but inner HMM model is not found,
+        remove whole cluster subfolder.
+
         Args
         cluster_names (set)     Set of cluster names whose HMM has to be done
         clusters_path (str)     Path where cluster directories can be found
@@ -1015,17 +1018,28 @@ class Batch(Pipeline):
 
             # Define cluster path
             cluster_path = os.path.join(clusters_path, cluster_name)
+            # Check if cluster path exists
+            if not os.path.isdir(cluster_path):
+                # Verbose log
+                if verbose:
+                    print('Could not find subfolder', end=' ')
+                    print('for cluster {:s}'.format(cluster_name), end=' ')
+                    print('at {:s}: skipping it'.format(cluster_path))
+                # Go to next iteration
+                continue
+
             # Define current cluster HMM model
             hmm_path = os.path.join(cluster_path, 'HMM')
-
-            # Ensure that cluster HMM exists
-            if not os.path.exists(hmm_path):
+            # Check if HMM path exists
+            if not os.path.isfile(hmm_path):
+                # Remove cluster subfolder
+                os.remove(cluster_path)
                 # Verbose log
                 if verbose:
                     print('Could not find HMM model file', end=' ')
                     print('for cluster {:s}'.format(cluster_name), end=' ')
                     print('at {:s}: skipping it'.format(hmm_path))
-                # Skip iteration
+                # Go to next iteration
                 continue
 
             # Open HMM file in read mode
@@ -1061,6 +1075,7 @@ class Batch(Pipeline):
         z_score (int)           Z-score defining whole dataset length
         n_cores (int)           Number of cores allocalble to run hmmsearch
         hmm_search (HMMSearch)  Instance of hmmsearch object
+
         Return
         (str)                   Path where temporary file holding DOMTBLOUT
                                 results is stored
@@ -1077,35 +1092,50 @@ class Batch(Pipeline):
             # Unzip target path and overwrite given target dataset
             chunk_path = gunzip(in_path=chunk_path, out_suffix=chunk_ext)
 
-        # # Initialize output temporary file path
-        # out_path = NamedTemporaryFile(delete=False, suffix='.out').name
         # Initialize tblout temporary file path
-        tblout_path = NamedTemporaryFile(delete=False, suffix='.tblout').name
+        tblout_path = NamedTemporaryFile(
+            delete=False,
+            dir=os.path.dirname(hmm_path),
+            suffix='.tblout'
+        ).name
         # Initialize domtblout temporary file path
-        domtblout_path = NamedTemporaryFile(delete=False, suffix='.domtblout').name
-        # # Initialize pfamtblout temporary file path
-        # pfamtblout_path = NamedTemporaryFile(delete=False, suffix='.pfamtblout').name
-        # Run hmmsearch against given chunk
-        hmm_search.run(
-            # Path to searched HMM model/library file
-            hmm_path=hmm_path,
-            # Path to sequences target dataset
-            target_path=chunk_path,
-            # # Path to search output
-            # out_path=out_path,
-            # Path to per-sequence output table
-            tblout_path=tblout_path,
-            # Path to per-domain output table
-            domtblout_path=domtblout_path,
-            # # Path to per-pfam-domain output table
-            # pfamtblout_path=pfamtblout_path,
-            # Define number of CPUs allocated
-            num_cpus=n_cores,
-            # Set e-value
-            seq_e=e_value,
-            # Set z-score
-            seq_z=z_score
-        )
+        domtblout_path = NamedTemporaryFile(
+            delete=False,
+            dir=os.path.dirname(hmm_path),
+            suffix='.domtblout'
+        ).name
+
+        # Safely run hmmsearch
+        try:
+            # Run hmmsearch against given chunk
+            hmm_search.run(
+                # Path to searched HMM model/library file
+                hmm_path=hmm_path,
+                # Path to sequences target dataset
+                target_path=chunk_path,
+                # # Path to search output
+                # out_path=out_path,
+                # Path to per-sequence output table
+                tblout_path=tblout_path,
+                # Path to per-domain output table
+                domtblout_path=domtblout_path,
+                # # Path to per-pfam-domain output table
+                # pfamtblout_path=pfamtblout_path,
+                # Define number of CPUs allocated
+                num_cpus=n_cores,
+                # Set e-value
+                seq_e=e_value,
+                # Set z-score
+                seq_z=z_score
+            )
+
+        # Catch exception
+        except CalledProcessError:
+            # Remove unzipped temporary file
+            if chunk_gzip:
+                os.remove(chunk_path)
+            # Raise the error interrupting pipeline
+            raise
 
         # Remove unzipped temporary file
         if chunk_gzip:
@@ -1139,38 +1169,53 @@ class Batch(Pipeline):
         Return
         (list)                  List of TBLOUT tabular output files
         (list)                  List of DOMTBLOUT tabular output files
+
+        Raise
+        (CalledProcessError)    In case hmmsearch could not run
         """
         # Verbose log
         if verbose:
             print('Searching HMM model/library')
 
-        # Initialize futures
-        futures = list()
-        # Loop through each target dataset
-        for chunk in target_dataset:
-            # Get chunk path
-            chunk_path = chunk.path
-            # Submit search function
-            future = client.submit(
-                func=self.search_hmm_chunk,
-                hmm_path=hmm_path,
-                chunk_path=chunk_path,
-                e_value=e_value,
-                z_score=z_score,
-                n_cores=n_cores,
-                hmm_search=self.hmm_search
-            )
+        # Run futures safely
+        try:
 
-            # Store future
-            futures.append(future)
+            # Initialize futures
+            futures = list()
+            # Loop through each target dataset
+            for chunk in target_dataset:
+                # Get chunk path
+                chunk_path = chunk.path
+                # Submit search function
+                futures.append(client.submit(
+                    func=self.search_hmm_chunk,
+                    hmm_path=hmm_path,
+                    chunk_path=chunk_path,
+                    e_value=e_value,
+                    z_score=z_score,
+                    n_cores=n_cores,
+                    hmm_search=self.hmm_search
+                ))
 
-        # Retrieve results (tuples containing paths to tabluar output files)
-        results = client.gather(futures)
-        # Define output lists
-        tblout_list = [results[i][0] for i in range(len(results))]
-        domtblout_list = [results[i][1] for i in range(len(results))]
-        # Return retrieved TBLOUT and DOMTBLOUT lists
-        return tblout_list, domtblout_list
+            # Retrieve results (tuples containing paths to tabluar output files)
+            results = client.gather(futures)
+            # Define output lists
+            tblout_list = [results[i][0] for i in range(len(results))]
+            domtblout_list = [results[i][1] for i in range(len(results))]
+            # Return retrieved TBLOUT and DOMTBLOUT lists
+            return tblout_list, domtblout_list
+
+        except CalledProcessError as err:
+            # Verbose log
+            if verbose:
+                # Print error STDERR
+                print(' '.join([
+                    'Could not run distributed hmmsearch:',
+                    'returned code {}:\n'.format(err.returncode),
+                    err.stdout.trim()
+                ]))
+            # Raise error interrupting pipeline
+            raise
 
     @staticmethod
     def parse_search_scores(tblout_cls, tblout_path, e_value, min_bits=25.0, max_bits=999999.99):
@@ -1190,13 +1235,13 @@ class Batch(Pipeline):
     @staticmethod
     def parse_search_hits(tblout_cls, tblout_path, scores):
         # Initialize hits dictionary
-        scores = dict()
+        hits = dict()
         # Parse hmmsearch result
         with tblout_cls(tblout_path) as table:
             # Retrieve hits
-            scores = table.get_hits(scores)
+            hits = table.get_hits(scores)
         # Return retrieved hits
-        return scores
+        return hits
 
     # Retrieve HMM hits from a list of tabular output files
     def parse_hmm_hits(self, tblout_paths, domtblout_paths, e_value, client):
@@ -1232,8 +1277,20 @@ class Batch(Pipeline):
             ))
         # Gather results
         results = client.gather(futures)
+
+        # Debug
+        print('DEBUG results')
+        for result in results:
+            for cluster_name, score in result.items():
+                print(cluster_name, score)
+
         # Merge all retrieved scores
         sequence_scores = SequenceHits.merge_scores(results)
+
+        # Debug
+        print('DEBUG scores')
+        for cluster_name, score in sequence_scores.items():
+            print(cluster_name, score)
 
         # Reinitialize futures
         futures = list()
@@ -1244,9 +1301,7 @@ class Batch(Pipeline):
                 func=self.parse_search_hits,
                 tblout_cls=SequenceHits,
                 tblout_path=tblout_path,
-                e_value=e_value,
-                min_bits=25.0,
-                max_bits=999999.99
+                scores=sequence_scores
             ))
         # Gather results (list of dictionaries mapping clusters to sequences)
         results = client.gather(futures)
@@ -1280,9 +1335,7 @@ class Batch(Pipeline):
                 func=self.parse_search_hits,
                 tblout_cls=DomainHits,
                 tblout_path=domtblout_path,
-                e_value=e_value,
-                min_bits=25.0,
-                max_bits=999999.99
+                scores=domain_scores
             ))
         # Gather results (list of dictionaries mapping clusters to sequences)
         results = client.gather(futures)

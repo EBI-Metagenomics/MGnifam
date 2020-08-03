@@ -5,6 +5,8 @@ from glob import iglob
 import subprocess
 import traceback
 import tempfile
+import math
+import sys
 import os
 import re
 
@@ -90,7 +92,7 @@ class HMMSearch(HMMER):
         )
 
     @classmethod
-    def get_memory(cls, model_len, longest_seq=4e04, num_bytes=28):
+    def get_memory(cls, model_len, longest_seq=4e04, num_bytes=48):
         return model_len * longest_seq * num_bytes
 
     @classmethod
@@ -119,13 +121,13 @@ class HMMSearch(HMMER):
                                 are not fitting computational ones)
         """
         # Compute number of Gb required by a single core
-        req_memory = cls.get_memory(model_len, longest_seq, num_bytes)
+        req_memory = cls.get_memory(model_len=model_len, longest_seq=longest_seq, num_bytes=num_bytes)
         # Loop from maximum number of CPUS to minimum (1)
         for num_cpus in range(max_cpus, 0, -1):
-            # Check memory allocated to a single core
-            core_memory = max_memory // num_cpus
+            # Check memory allocated to a single cpu
+            cpu_memory = max_memory / num_cpus
             # Case allocated memory does not fit required
-            if core_memory < req_memory:
+            if cpu_memory < req_memory:
                 continue  # Skip iteration
             # Otherwise, return current number of cpus
             return num_cpus
@@ -396,17 +398,17 @@ class SequenceHits(Hits):
             # Loop through every query name in current scores
             for query_name in curr_scores.keys():
                 # Retrieve current TC, NC, GA
-                curr_tc, curr_nc, curr_ga = curr_scores.get(query_name)
+                curr_tc, curr_nc, curr_ga = curr_scores[query_name]
 
-                # Case this query name is not present in current scores dict
+                # Case this query name is not in current scores dict
                 if query_name not in scores.keys():
                     # Insert current scores
-                    scores.setdefault(query_name, (curr_tc, curr_nc, curr_ga))
+                    scores[query_name] = (curr_tc, curr_nc, curr_ga)
                     # Go to next iteration
                     continue
 
                 # Retrieve previous TC NC GA
-                prev_tc, prev_nc, prev_ga = scores.get(query_name)
+                prev_tc, prev_nc, prev_ga = scores[query_name]
                 # Set new TC: minimum between current and previous
                 curr_tc = min(curr_tc, prev_tc)
                 # Set new NC: maximum between current and previous
@@ -509,6 +511,31 @@ if __name__ == '__main__':
     UNIPROT_PATH = os.path.join(ROOT_PATH, 'data_', 'uniprot', 'chunk*.fa.gz')
     # Define path to MGnifam dataset
     MGNIFAM_PATH = os.path.join(ROOT_PATH, 'data_', 'mgnify', 'chunk*.fa.gz')
+
+    # Define model length
+    model_len = 1000
+    # Define longest sequence length
+    longest_len = 4e04
+    # Define maximum allowed memory per job
+    max_memory = 8e09
+    # Compute required memory per CPU
+    req_memory = HMMSearch.get_memory(model_len, longest_len)
+    # Compute maximum number of cores
+    print(' '.join([
+        'Memory required for a model of length {:d}'.format(model_len),
+        'with a maximum sequence length of {:d}'.format(int(longest_len)),
+        'is {:.2f} GB\n'.format(req_memory / 1e09)
+    ]))
+
+    # Compute max number of CPU with allowed memory 8 GB
+    num_cpus = HMMSearch.get_cpus(max_memory=max_memory, model_len=model_len,
+                                  max_cpus=8, longest_seq=longest_len)
+    # Show retrieved number of CPUs
+    print(' '.join([
+        'Maximum number of CPUs allowed with maximum',
+        'memory per job {:.2f} GB'.format(max_memory / 1e09),
+        'is {:d}\n'.format(num_cpus)
+    ]))
 
     # Define new UniProt dataset
     uniprot = Fasta.from_str(UNIPROT_PATH)
@@ -666,3 +693,46 @@ if __name__ == '__main__':
     # Remove temporary files
     os.remove(tblout_path)
     os.remove(domtblout_path)
+
+    # Initialize scores dictionary
+    scores = dict()
+    # Define UniProt iterator
+    uniprot_iter = iglob(UNIPROT_PATH)
+    # Loop through first 3 example HMM models
+    for i, chunk_path in enumerate(uniprot_iter):
+        # Initailize tblout and domtblout files
+        tblout_path = tempfile.NamedTemporaryFile(delete=False).name
+        domtblout_path = tempfile.NamedTemporaryFile(delete=False).name
+
+        # Make HMM search
+        hmm_search.run(
+            hmm_path=hmm_path,
+            target_path=chunk_path,
+            tblout_path=tblout_path,
+            domtblout_path=domtblout_path,
+            seq_e=1000,
+            seq_z=1e06,
+            num_cpus=1
+        )
+
+        # Retrieve scores
+        with SequenceHits(tblout_path) as hits:
+            # Retrieve scores
+            scores = hits.merge_scores([
+                scores,  # Previously stored scores
+                hits.get_scores(e_value=1)  # Newly retrieved scores
+            ])
+
+        # Print scores
+        print('Scores:')
+        for query_name, score in scores.items():
+            print(query_name, score)
+        print()
+
+        # Remove temporary files
+        os.remove(tblout_path)
+        os.remove(domtblout_path)
+
+        # Early stopping condition
+        if i >= 3:
+            break

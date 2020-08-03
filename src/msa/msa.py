@@ -181,7 +181,7 @@ class MSA(object):
     # Load from fasta file
     @classmethod
     def from_fasta(cls, in_file, acc_regex=r'^>(.*)[\n\r]*$'):
-        """Load MSA from .fasta
+        """ Load alignment from .fasta file
 
         Args
         in_file     (file)  Buffer for reading input fasta file
@@ -190,7 +190,7 @@ class MSA(object):
                             (by default all the line without '>' character)
 
         Return
-        self                Allows chaining
+        MSA                 Return new Multiple Sequnece Alignment object
         """
         # Initialize output MSA object
         msa = cls()
@@ -217,6 +217,44 @@ class MSA(object):
         msa.end = not_gap.astype(np.int)
         # Return reference to current object (allows chaining)
         return msa
+
+    # Load from stockholm file (hmmalign output)
+    @classmethod
+    def from_sto(cls, in_file):
+        """ Load alignment from .sto stockholm file
+
+        Args
+        in_file     (file)  Buffer for reading input fasta file
+
+        Return
+        MSA                 Return new Multiple Sequnece Alignment object
+        """
+        # Initialize new MSA object
+        msa = cls()
+        # Initialize list of sequences
+        aln = list()
+        # Initialize list of accession numbers
+        acc = list()
+        # Initialize offset list
+        beg, end = list(), list()
+
+        # Loop through stockholm file lines
+        for line in in_file:
+            # Define expected line format to match
+            match = re.search(r'^([^#]\S*)/(\d+)-(\d+)\s+(\S+)', line)
+            # Case current line does not match expected format
+            if not match:
+                # Go to next iteration
+                continue
+            # Save accession number
+            acc.append(str(match.group(1)))
+            # Save offset
+            beg.append(int(match.group(2)))
+            end.append(int(match.group(3)))
+            # Save residues
+            aln.append(list(match.group(4)))
+
+        # Update
 
     # Plot alignment matrix as heatmap
     def plot_heatmap(self, ax, score='gap', cmap=None):

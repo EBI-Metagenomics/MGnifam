@@ -122,11 +122,11 @@ if __name__ == '__main__':
         help='Whether to print verbose log or not'
     )
     parser.add_argument(
-        '-c', '--cores', type=int, default=1,
+        '-c', '--cores', type=int, default=2,
         help='Maximum number of jobs per core'
     )
     parser.add_argument(
-        '-m', '--memory', type=str, default='8 GB',
+        '-m', '--memory', type=str, default='16 GB',
         help='Maximum amount of memory per job'
     )
     parser.add_argument(
@@ -181,7 +181,8 @@ if __name__ == '__main__':
         cluster_type=cluster_types.get(args.cluster),
         cluster_kwargs={
             'cores': args.cores,
-            'memory': args.memory
+            'memory': args.memory,
+            'processes': 1
         },
         # Path to datasets (fixed)
         linclust_path=args.linclust_path,

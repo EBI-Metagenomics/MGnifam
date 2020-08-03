@@ -27,7 +27,7 @@ class HMM(object):
     @classmethod
     def get_length(cls, string):
         # Check if input string matches length string
-        is_length = re.search(r'^LENG\s+(\d+)', string)
+        is_length = re.search(r'^LENG[\s]+(\d+)', string)
         # Case string is not length
         if not is_length:
             return None
@@ -49,7 +49,7 @@ class HMM(object):
         # Define new dict containing default HMM parameters
         params = {'name': '', 'length': 0, 'alphabet': 'amino'}
         # Open input file
-        file = open_file(path, 'r')
+        file = open(path, 'r')
         # Loop through each line in file
         for line in file:
             # Get name
