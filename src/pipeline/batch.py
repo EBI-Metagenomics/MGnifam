@@ -122,6 +122,7 @@ class Batch(Pipeline):
             print('at {:s}'.format(clusters_path))
 
         # Initialize sub-directories
+        # TODO Initialize cluster directories
         bias_path, noaln_path, discard_path, uniprot_path = self.init_subdir(clusters_path)
 
         # Initialize new cluster
@@ -136,6 +137,8 @@ class Batch(Pipeline):
             client=client,
             verbose=False
         )
+
+        # TODO Check cluster members
 
         # Initialize set of retrieved sequence accession numbers
         sequences_acc = set()
@@ -164,6 +167,8 @@ class Batch(Pipeline):
             verbose=verbose
         )
 
+        # TODO Check fasta sequences
+
         # Define number of sequences
         num_sequences = len(fasta_sequences)
 
@@ -172,10 +177,8 @@ class Batch(Pipeline):
             print('Retrieved {:d} FASTA'.format(num_sequences), end=' ')
             print('sequences in {:.0f} seconds'.format(time_run))
 
-        # DEBUG
-        print('There are {:d} cluster members'.format(len(cluster_members)))
         # Check compositional bias
-        time_run, (bias_below, bias_above) = benchmark(
+        time_run, (cluster_names, _) = benchmark(
             fn=self.check_comp_bias,
             cluster_members=cluster_members,
             fasta_sequences=fasta_sequences,
@@ -183,20 +186,18 @@ class Batch(Pipeline):
             verbose=verbose
         )
 
-        # Keep only cluster whose bias is above given threshold
-        cluster_names = bias_below
-        # Loop through cluster members
-        for cluster_name in bias_above:
-            # Remove cluster name from clusters dictionary
-            cluster_members.pop(cluster_name)
+        # Keep only clusters whose bias is below threshold
+        for cluster_name in cluster_members:
+            # Case cluster is in cluster names
+            if cluster_name not in cluster_names:
+                # Otherwise, remove cluster name
+                cluster_members.pop(cluster_name)
 
         # Verbose log
         if verbose:
             print('Compositional bias computed', end=' ')
             print('for {:d} clusters'.format(len(cluster_members)), end=' ')
             print('in {:.0f} seconds'.format(time_run))
-
-        return
 
         # Make SEED alignments
         time_run, _ = benchmark(
@@ -517,6 +518,10 @@ class Batch(Pipeline):
         # Return cluster members
         return cluster_members
 
+    # TODO Check cluster members found
+    def check_cluster_members(self, cluster_names, cluster_members):
+        raise NotImplementedError
+
     # Search for fasta sequences
     def search_fasta_sequences(self, sequences_acc, fasta_dataset, client, verbose=False):
         """ Retrieve fasra sequences from a Fasta dataset
@@ -576,8 +581,12 @@ class Batch(Pipeline):
         # Return either the sequences dictionary and the dataset length
         return fasta_sequences, fasta_length
 
+    # TODO Check fasta sequences found
+    def check_fasta_sequences(self, sequences_acc, cluster_members):
+        raise NotImplementedError
+
     # Check compositional bias
-    def check_comp_bias(self, cluster_members, fasta_sequences, client, verbose=False):
+    def check_comp_bias(self, clusters_path, bias_path, cluster_members, fasta_sequences, client, verbose=False):
         """ Check compositional bias
 
         Given a cluster members dictionary and a fasta sequences dictionary,
@@ -643,20 +652,40 @@ class Batch(Pipeline):
         inclusive = self.comp_bias_inclusive
         # Loop through each cluster name in results
         for cluster_name in results.keys():
-            # Get current compositional bias value
-            curr_bias = results[cluster_name]
+
+            # Define current cluster path
+            cluster_path = os.path.join(clusters_path, cluster_name)
+            # Encure that cluster path exists
+            if not os.path.isdir(cluster_path):
+                # Make new directory
+                os.mkdir(cluster_path)
+
+            # Retrieve cluster bias
+            cluster_bias = results.get(cluster_name, 1.0)
+
+            # Write bias score to file
+            with open(os.path.join(clusters_path, 'BIAS'), 'w') as file:
+                file.write(cluster_bias)
+
+            # Define target path if bias is too high
+            target_path = os.path.join(bias_path, cluster_name)
             # Case compositional bias threshold is inclusive
-            if (curr_bias >= threshold) and inclusive:
+            if (cluster_bias >= threshold) and inclusive:
+                # Move cluster subfolder into BIAS folder
+                shutil.move(cluster_path, target_path)
                 # Add cluster name to the above threshold set
                 bias_above.add(cluster_name)
                 # Go to next iteration
                 continue
             # Case compositional bias threshold is exclusive
-            if (curr_bias > threshold) and not inclusive:
+            if (cluster_bias > threshold) and not inclusive:
+                # Move cluster subfolder into BIAS folder
+                shutil.move(cluster_path, target_path)
                 # Add cluster name to the above threshold set
                 bias_above.add(cluster_name)
                 # Go to next iteration
                 continue
+
             # By default, add cluster name to the below threshold set
             bias_below.add(cluster_name)
 
@@ -1242,67 +1271,3 @@ class Batch(Pipeline):
 
         # Return sequence scores and sequence hits
         return sequence_scores, domain_scores, sequence_hits, domain_hits
-
-
-# Unit testing
-if __name__ == '__main__':
-
-    # Define path to root
-    ROOT_PATH = os.path.join(os.path.dirname(__file__), '..', '..')
-    # Define path to example clusters
-    EXAMPLES_PATH = os.path.join(ROOT_PATH, 'tmp', 'examples', 'MGYP*')
-    # Define path to UniProt dataset
-    UNIPROT_PATH = os.path.join(ROOT_PATH, 'data_', 'uniprot', 'chunk*.fa.gz')
-    # Define path to MGnifam dataset
-    MGNIFAM_PATH = os.path.join(ROOT_PATH, 'data_', 'mgnify', 'chunk*.fa.gz')
-
-    # Define new UniProt dataset
-    uniprot = Fasta.from_str(UNIPROT_PATH)
-    # Define ner MGnifam dataset
-    mgnifam = Fasta.from_str(MGNIFAM_PATH)
-
-    # Get first chunk in UniProt dataset
-    chunk = uniprot[0]
-    # Get longest sequence in chunk
-    longest_seq, longest_len, chunk_size = chunk.get_longest()
-    # Print longest sequence and chunk size
-    print('Longest sequence found is of size {:d}:'.format(longest_len))
-    print(longest_seq)
-    print('among other {:d} sequences'.format(chunk_size))
-
-    # Retrieve first example cluster
-    cluster_path = next(iglob(EXAMPLES_PATH))
-    # Get chosen cluster name
-    cluster_name = os.path.basename(cluster_path)
-    # Show which cluster has been chosen
-    print('Chosen cluster is {:s} at {:s}'.format(cluster_name, cluster_path))
-
-    # Retrieve HMM from given cluster
-    hmm_path = os.path.join(cluster_path, 'HMM')
-    # Retrieve first chunk of UniProt
-    chunk_path = chunk.path
-    # Initialize new hmmsearch script
-    hmm_search = HMMSearch()
-    # Search HMM against first UniProt chunk
-    tblout_path, domtblout_path = Batch.search_hmm_chunk(
-        hmm_path=hmm_path,
-        chunk_path=chunk_path,
-        hmm_search=hmm_search,
-        e_value=1e03,
-        z_score=9e05,
-        n_cores=1
-    )
-    # Print output paths
-    print('Files retrieved from HMMSEARCH:')
-    print('  {:s}'.format(tblout_path))
-    print('  {:s}'.format(domtblout_path))
-
-    # Initialize sequence scores
-    seq_scores = Batch.get_sequence_scores(tblout_path, e_value=0.1)
-    # Print sequence scores dictionary
-    print(json.dumps(seq_scores, indent=2))
-
-    # # Initialize domain scores
-    # dom_scores = Batch.get_domain_scores(domtblout_path, seq_scores, e_value=0.1)
-    # # Print domains scores dictionary
-    # print(json.dumps(dom_scores, indent=2))
