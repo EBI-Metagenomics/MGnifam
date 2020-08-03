@@ -138,7 +138,8 @@ class Batch(Pipeline):
             verbose=False
         )
 
-        # TODO Check cluster members
+        # Check cluster members
+        self.check_cluster_members(cluster_names, cluster_members)
 
         # Initialize set of retrieved sequence accession numbers
         sequences_acc = set()
@@ -159,7 +160,7 @@ class Batch(Pipeline):
             print('in {:.0f} seconds'.format(time_run))
 
         # Fill mgnifam dictionary
-        time_run, (fasta_sequences, num_sequences) = benchmark(
+        time_run, (fasta_sequences, _) = benchmark(
             fn=self.search_fasta_sequences,
             sequences_acc=sequences_acc,
             fasta_dataset=self.mgnifam,
@@ -167,7 +168,8 @@ class Batch(Pipeline):
             verbose=verbose
         )
 
-        # TODO Check fasta sequences
+        # Check fasta sequences
+        self.check_fasta_sequences(sequences_acc, fasta_sequences)
 
         # Define number of sequences
         num_sequences = len(fasta_sequences)
@@ -180,6 +182,8 @@ class Batch(Pipeline):
         # Check compositional bias
         time_run, (cluster_names, _) = benchmark(
             fn=self.check_comp_bias,
+            clusters_path=clusters_path,
+            bias_path=bias_path,
             cluster_members=cluster_members,
             fasta_sequences=fasta_sequences,
             client=client,
@@ -518,9 +522,16 @@ class Batch(Pipeline):
         # Return cluster members
         return cluster_members
 
-    # TODO Check cluster members found
+    # Check cluster members found
     def check_cluster_members(self, cluster_names, cluster_members):
-        raise NotImplementedError
+        # Check that cluster members keys are the same as cluster names
+        if set(cluster_names) != set(cluster_members.keys()):
+            # Raise new exception and interupt execution
+            raise KeyError(' '.join([
+                'Error: cluster members have not been retrieved for',
+                'all the {:d} input clusters: '.format(len(cluster_names)),
+                'aborting pipeline execution'
+            ]))
 
     # Search for fasta sequences
     def search_fasta_sequences(self, sequences_acc, fasta_dataset, client, verbose=False):
@@ -581,9 +592,18 @@ class Batch(Pipeline):
         # Return either the sequences dictionary and the dataset length
         return fasta_sequences, fasta_length
 
-    # TODO Check fasta sequences found
-    def check_fasta_sequences(self, sequences_acc, cluster_members):
-        raise NotImplementedError
+    # Check fasta sequences found
+    def check_fasta_sequences(self, sequences_acc, fasta_sequences):
+        # Loop through all required seuqnece accession numbers
+        for sequence_acc in sequences_acc:
+            # Check if sequnece accession is available and not empty
+            if not fasta_sequences.get(sequence_acc, ''):
+                # Raise new error
+                raise KeyError(' '.join([
+                    'Error: required sequence accession number',
+                    '{} has no associated fasta entry:'.format(sequence_acc),
+                    'aborting pipeline execution'
+                ]))
 
     # Check compositional bias
     def check_comp_bias(self, clusters_path, bias_path, cluster_members, fasta_sequences, client, verbose=False):
