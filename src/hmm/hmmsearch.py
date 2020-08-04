@@ -135,52 +135,30 @@ class HMMSearch(HMMER):
         return 0
 
 
-class Hits(object):
-    """ Iterate through hmmsearch output
+class Tblout(object):
 
-    This class parses a tabular output file from HMMSearch and retruns its
-    attributes iteratively. However, not all the attributes are returned, only
-    the ones needed in further computations.
-    """
+    # Columns
+    columns = {
+        'target_name': 0,
+        'query_name': 2,
+        'e_value': 4,
+        'bit_score': 5
+    }
 
     # Constructor
     def __init__(self, path):
-        """ Constructor
-
-        Args
-        path (str)      Path to file storing tabular output results of
-                        hmmsearch
-        """
-        # Store input path
-        self.path = path
-
-    def open(self):
-        # Create new inner file buffer
-        self.file = open(self.path, 'r')
-        # Return file reference
-        return self.file
-
-    def __enter__(self):
-        # Open inner file
-        self.open()
-        # Return reference to self
-        return self
-
-    def close(self):
-        # Close inner file
-        self.file.close()
-        # Remove inner file reference
-        del self.file
-
-    def __exit__(self, exc_type, exc_value, tb):
-        # Close and delete inner file buffer
-        self.close()
-        # Case exception is set
-        if exc_type is not None:
-            # # Get traceback
-            # traceback.print_exception(exc_type, exc_value, tb)
-            return False # uncomment to pass exception through
-        return True
+        # Load file from path
+        with open(path, 'r') as file:
+            # Define file iterator
+            iter = self.iterator(file)
+            # Initialize inner table
+            self.table = list()
+            # Iterate through file and store table
+            for row in iter:
+                # Add new line to inner table
+                self.table.append({
+                    col: row[i][1] for col, i in self.columns.items()
+                })
 
     @staticmethod
     def iterator(iterable):
@@ -256,53 +234,8 @@ class Hits(object):
                 for j in range(len(bounds))
             ]
 
-    def iterate(self):
-        """ Return iterator through tabular results file rows
-
-        Return
-        (generator)             Generator for loading file rows on the fly, as
-                                returned by iterator static method
-
-        Raise
-        (FileNotFoundError)
-        """
-        # Ensure that inner file buffer exists
-        if not hasattr(self, 'file'):
-            # If not: raise new error
-            raise FileNotFoundError(message=(
-                'No file opened: inner file must be opened with either '
-                '`open(...)` method or `with` statement!'
-            ))
-        # Restart file from beginning
-        self.file.seek(0)
-        # Return iterator over input tabular results file
-        return self.iterator(self.file)
-
-    def __iter__(self):
-        return self.iterate()
-
-
-# Implement sequence hits table parser
-class SequenceHits(Hits):
-
-    # Static columns dict(name: index)
-    columns = {
-        'target_name': 0,
-        'query_name': 2,
-        'e_value': 4,
-        'bit_score': 5
-    }
-
-    def iterate(self):
-        # Loop through each row in tabular file
-        for row in super().iterate():
-            # Retrieve row dictionary (each row value is a tuple (key, value))
-            row = {key: row[index][1] for key, index in self.columns.items()}
-            # Yield current row
-            yield row
-
-    # Compute score (TC, NC, GA) for each query
-    def get_scores(self, e_value=0.001, min_bits=25.0, max_bits=999999.99):
+    # Return dictionary associating each query name with a tuple (TC, NC, GA)
+    def get_scores(self, e_value=0.01, min_bits=25.0, max_bits=999999.99):
         """ Compute (TC, NC, GA) threhsold bit scores
 
         If row e-value is below given e-value threshold, then check if
@@ -333,9 +266,8 @@ class SequenceHits(Hits):
 
         # Initialize scores dictionary mapping query name to tuple(TC, NC, GA)
         scores = dict()
-
         # Loop through each row in current file
-        for row in self.iterate():
+        for row in self.table:
 
             # Retrieve query name
             curr_qname = str(row['query_name'])
@@ -344,87 +276,38 @@ class SequenceHits(Hits):
             # Retrieve bit score from current row
             curr_bits = float(row['bit_score'])
 
-            # Ensure that entry for current query name is set
-            # TC is set extremely high (should include every score)
-            # NC is set to lowest possible bit score
-            # GA will be recomputed at the first iteration
-            scores.setdefault(curr_qname, (max_bits, min_bits, min_bits))
-            # Define current TC, NC, GA
-            tc, nc, ga = scores[curr_qname]
-
-            # Check if current e-value is below threshold one
+            # Check if current e-value satisfies threshold
             if curr_eval < e_value:
-                # Check if current bit score is lower than TC
-                if curr_bits < tc:
-                    # Update tc, ensure it is greater than minimum bit score
-                    tc = max(min_bits, curr_bits)
 
-            # Otherwise: current e-value is greater or equal than threshold one
-            else:
-                # Check if current bit score is higher than threshold one
-                if curr_bits > nc:
-                    # Ensure bit score it is lower than TC
-                    curr_bits = min(tc, curr_bits)
-                    # Update nc, ensure it is greater than minimum bit score
-                    nc = max(curr_bits, min_bits)
+                # Ensure that entry for current query name is set
+                # TC is set extremely high (should include every score)
+                # NC is set to lowest possible bit score
+                # GA will be recomputed at the first iteration
+                tc, nc, ga = scores.setdefault(curr_qname, (min_bits, max_bits, min_bits))
 
-            # Update gathering threshold (GA): compute midpoint between NC and TC
-            ga = nc + ((tc - nc) / 2)
+                # Case current bit score is greater than current TC
+                if curr_bits > tc:
+                    # Update current TC
+                    tc = curr_bits
 
-            # Update scores for current query name
-            scores[curr_qname] = (tc, nc, ga)
+                # Case current bit score is lower than current NC
+                elif curr_bits < nc:
+                    # Update current NC
+                    nc = curr_bits
+
+                # Ensure that NC is lower than TC
+                nc = min(nc, tc)
+                # Compute gathering threshold (GA): midpoint between NC and TC
+                # Ensure that it is not greater than 25.0 (max value)
+                ga = min(25.0, nc + ((tc - nc) / 2))
+
+                # Update scores for current query name
+                scores[curr_qname] = (tc, nc, ga)
 
         # Return scores dict
         return scores
 
-    @staticmethod
-    def merge_scores(scores_list):
-        """ Merge different score dictionaries
-
-        Loop through each score dictionary in input list, merges TC, NC and GA
-        for the retrieved query names.
-
-        Args
-        scores_list (list)          List of scores dictionaries
-
-        Return
-        (dict)                      Merged scores dictionary
-        """
-        # Initialize scores output dictionary
-        scores = dict()
-
-        # Loop through each score dictionary in input list
-        for curr_scores in scores_list:
-            # Loop through every query name in current scores
-            for query_name in curr_scores.keys():
-                # Retrieve current TC, NC, GA
-                curr_tc, curr_nc, curr_ga = curr_scores[query_name]
-
-                # Case this query name is not in current scores dict
-                if query_name not in scores.keys():
-                    # Insert current scores
-                    scores[query_name] = (curr_tc, curr_nc, curr_ga)
-                    # Go to next iteration
-                    continue
-
-                # Retrieve previous TC NC GA
-                prev_tc, prev_nc, prev_ga = scores[query_name]
-                # Set new TC: minimum between current and previous
-                curr_tc = min(curr_tc, prev_tc)
-                # Set new NC: maximum between current and previous
-                curr_nc = max(curr_nc, prev_nc)
-                # Ensure that current NC is not higher than current TC
-                curr_nc = min(curr_tc, curr_nc)
-                # COmpute new gathering threshold (GA)
-                curr_ga = curr_nc + ((curr_tc - curr_nc) / 2)
-
-                # Store new triple (TC, NC, GA)
-                scores[query_name] = (curr_tc, curr_nc, curr_ga)
-
-        # Return scores output dictionary
-        return scores
-
-    # Retrieve entries according to scores (TC, NC, GA) for each query
+    # Return dictionary associating query names with significant target names
     def get_hits(self, scores):
         """ Retrieve sequences that meets scores requirements
 
@@ -447,57 +330,95 @@ class SequenceHits(Hits):
 
         # Initailize hits dictionary associating queries to set of targets
         hits = dict()
-
         # Loop through each row in inner tabular results file
-        for row in self.iterate():
+        for row in self.table:
 
-            # Retrieve required fields form current row
+            # Retrieve query name
             curr_qname = str(row['query_name'])
+            # Retrieve target name
             curr_tname = str(row['target_name'])
-            curr_eval = float(row['e_value'])
+            # Retrieve bit score
             curr_bits = float(row['bit_score'])
 
+            # Case no score is available for current hit (not significant)
+            if curr_qname not in set(scores.keys()):
+                # Go to next iteration
+                continue
+
             # Retrieve scores for current query name
-            tc, nc, ga = scores[curr_qname]
+            tc, nc, ga = scores.get(curr_qname)
 
             # Case current bit score satisfies gathering threshold (GA)
-            if curr_bits >= ga:
+            if curr_bits > ga:
                 # Initialize set for current query name
                 hits.setdefault(curr_qname, set())
                 # Add current target name to hits set
-                hits.get(curr_qname).add(curr_tname)
+                hits[curr_qname].add(curr_tname)
 
         # Return hits dictionary
         return hits
 
-    @staticmethod
-    def merge_hits(hits_list):
-        # Initialize merged hits dictionary
-        hits = dict()
 
-        # Loop through each hits dictionary in input list
-        for hits in hits_list:
-            # Loop through each key in current hits dictionary
-            for query_name, target_names in hits.items():
-                # Ensure there is a set for current query name
-                hits.setdefault(query_name, set())
-                # Add current target names
-                hits.get(query_name).union(target_names)
+class Domtblout(Tblout):
 
-        # Return merged hits dictionary
-        return hits
-
-
-# Implement domain hits table parser
-class DomainHits(SequenceHits):
-
-    # Static columns dict(name: index)
+    # Columns
     columns = {
         'target_name': 0,
         'query_name': 3,
         'e_value': 12,
         'bit_score': 13
     }
+
+
+# Utility: merge scores dictionary
+def merge_scores(*args):
+    # Initialize scores dict(query name: (TC, NC, GA))
+    scores = dict()
+    # Loop through each given score dictionary
+    for i in range(len(args)):
+        # Loop through every query name in current scores dict
+        for query_name in args[i]:
+
+            # Retrieve previous score tuple
+            prev_score = scores.setdefault(query_name, args[i][query_name])
+            # Retrieve previous TC, NC, GA
+            prev_tc, prev_nc, prev_ga = prev_score
+
+            # Retrieve current TC, NC, GA
+            curr_tc, curr_nc, curr_ga = args[i][query_name]
+
+            # Set new TC: minimum between current and previous
+            curr_tc = max(curr_tc, prev_tc)
+            # Set new NC: maximum between current and previous
+            curr_nc = min(curr_nc, prev_nc)
+            # Ensure that current NC is not higher than current TC
+            curr_nc = min(curr_tc, curr_nc)
+            # Compute new gathering threshold (GA)
+            curr_ga = min(25.0, curr_nc + ((curr_tc - curr_nc) / 2))
+
+            # Store new triple (TC, NC, GA)
+            scores[query_name] = (curr_tc, curr_nc, curr_ga)
+
+    # Return merged scores dictionary
+    return scores
+
+
+# Utility: merge hits dictionary
+def merge_hits(*args):
+    # Initialize hits dict(query name: set of target names)
+    hits = dict()
+    # Loop through each given hit dictionary
+    for i in range(len(args)):
+        # Loop through every query name in current dictionary
+        for query_name in args[i]:
+            # Loop through each target name for current query name
+            for target_name in args[i][query_name]:
+                # Store current query name
+                hits.setdefault(query_name, set())
+                # Store current target name
+                hits[query_name].add(target_name)
+    # Return merged hits dictionary
+    return hits
 
 
 # unit testing
@@ -584,155 +505,155 @@ if __name__ == '__main__':
     print('  {:s}'.format(domtblout_path))
     print()
 
-    # Test iterator for tblout (sequences)
-    print('Retrieved tblout rows (sequence hits):')
-    # Open tblout file
-    with open(tblout_path, 'r') as tblout_file:
-        # Define tblout iterator
-        tblout_iter = Hits.iterator(tblout_file)
-        # Loop through each row
-        for i, row in enumerate(tblout_iter):
-            # Print first three rows only
-            if i > 3:
-                continue
-            # Print row
-            print(row)
-        # Print number of non printed hits
-        print('...and {:d} other'.format(i - 3))
-        print()
-
-    # Test iterator for domtblout (domains)
-    print('Retrieved domtblout rows (domain hits):')
-    # Open domtblout file
-    with open(domtblout_path, 'r') as domtblout_file:
-        # Define tblout iterator
-        domtblout_iter = Hits.iterator(domtblout_file)
-        # Loop through each row
-        for i, row in enumerate(domtblout_iter):
-            # Print first three rows only
-            if i > 3:
-                continue
-            # Print row
-            print(row)
-        # Print number of non printed hits
-        print('...and {:d} other'.format(i - 3))
-        print()
-
-    # Test TBLOUT iterator (sequence hits)
-    print('Retrieved tblout (sequences) hits:')
-    # Read TBLOUT file
-    with SequenceHits(tblout_path) as hits:
-        # Loop through each hit
-        for i, hit in enumerate(hits.iterate()):
-            # Print only the first 3 hits
-            if i > 3:
-                continue
-            # Print current hit
-            print(hit)
-        # Print number of non printed hits
-        print('...and {:d} other'.format(i - 3))
-        print()
-
-    # Test DOMTBLOUT iterator (domain hits)
-    print('Retrieved domtblout (domains) hits:')
-    # Read DOMTBLOUT file
-    with DomainHits(domtblout_path) as hits:
-        # Loop through each hit
-        for i, hit in enumerate(hits.iterate()):
-            # Print only the first 3 hits
-            if i > 3:
-                continue
-            # Print current hit
-            print(hit)
-        # Print number of non printed hits
-        print('...and {:d} other'.format(i - 3))
-        print()
-
-    # Test sequneces scores retrieval
-    with SequenceHits(tblout_path) as hits:
-
-        # Retrieve scores
-        scores = hits.get_scores(e_value=0.1)
-        # Show sequence scores
-        print('Retrieved sequence scores (e-value set to 0.1): ')
-        # Loop through each query name
-        for curr_qname, curr_scores in scores.items():
-            # Print eithr query name and its scores
-            print(curr_qname, curr_scores)
-
-        # Retrieve sequences
-        sequences = hits.get_hits(scores)
-        # Show retrieved sequences
-        print('Retrieved sequence hits: ')
-        # Loop through each retrieved sequence
-        for curr_qname, curr_tname in sequences:
-            # Print either current query name and target name
-            print(curr_qname, curr_tname)
-
-    # Test sequneces scores retrieval
-    with DomainHits(domtblout_path) as hits:
-
-        # Retrieve scores
-        scores = hits.get_scores(e_value=0.1)
-        # Show sequence scores
-        print('Retrieved domain scores (e-value set to 0.1): ')
-        # Loop through each query name
-        for curr_qname, curr_scores in scores.items():
-            # Print eithr query name and its scores
-            print(curr_qname, curr_scores)
-
-        # Retrieve sequences
-        domains = hits.get_hits(scores)
-        # Show retrieved sequences
-        print('Retrieved domain hits: ')
-        # Loop through each retrieved sequence
-        for curr_qname, curr_tname in domains:
-            # Print either current query name and target name
-            print(curr_qname, curr_tname)
-
-    # Remove temporary files
-    os.remove(tblout_path)
-    os.remove(domtblout_path)
-
-    # Initialize scores dictionary
-    scores = dict()
-    # Define UniProt iterator
-    uniprot_iter = iglob(UNIPROT_PATH)
-    # Loop through first 3 example HMM models
-    for i, chunk_path in enumerate(uniprot_iter):
-        # Initailize tblout and domtblout files
-        tblout_path = tempfile.NamedTemporaryFile(delete=False).name
-        domtblout_path = tempfile.NamedTemporaryFile(delete=False).name
-
-        # Make HMM search
-        hmm_search.run(
-            hmm_path=hmm_path,
-            target_path=chunk_path,
-            tblout_path=tblout_path,
-            domtblout_path=domtblout_path,
-            seq_e=1000,
-            seq_z=1e06,
-            num_cpus=1
-        )
-
-        # Retrieve scores
-        with SequenceHits(tblout_path) as hits:
-            # Retrieve scores
-            scores = hits.merge_scores([
-                scores,  # Previously stored scores
-                hits.get_scores(e_value=1)  # Newly retrieved scores
-            ])
-
-        # Print scores
-        print('Scores:')
-        for query_name, score in scores.items():
-            print(query_name, score)
-        print()
-
-        # Remove temporary files
-        os.remove(tblout_path)
-        os.remove(domtblout_path)
-
-        # Early stopping condition
-        if i >= 3:
-            break
+    # # Test iterator for tblout (sequences)
+    # print('Retrieved tblout rows (sequence hits):')
+    # # Open tblout file
+    # with open(tblout_path, 'r') as tblout_file:
+    #     # Define tblout iterator
+    #     tblout_iter = Hits.iterator(tblout_file)
+    #     # Loop through each row
+    #     for i, row in enumerate(tblout_iter):
+    #         # Print first three rows only
+    #         if i > 3:
+    #             continue
+    #         # Print row
+    #         print(row)
+    #     # Print number of non printed hits
+    #     print('...and {:d} other'.format(i - 3))
+    #     print()
+    #
+    # # Test iterator for domtblout (domains)
+    # print('Retrieved domtblout rows (domain hits):')
+    # # Open domtblout file
+    # with open(domtblout_path, 'r') as domtblout_file:
+    #     # Define tblout iterator
+    #     domtblout_iter = Hits.iterator(domtblout_file)
+    #     # Loop through each row
+    #     for i, row in enumerate(domtblout_iter):
+    #         # Print first three rows only
+    #         if i > 3:
+    #             continue
+    #         # Print row
+    #         print(row)
+    #     # Print number of non printed hits
+    #     print('...and {:d} other'.format(i - 3))
+    #     print()
+    #
+    # # Test TBLOUT iterator (sequence hits)
+    # print('Retrieved tblout (sequences) hits:')
+    # # Read TBLOUT file
+    # with SequenceHits(tblout_path) as hits:
+    #     # Loop through each hit
+    #     for i, hit in enumerate(hits.iterate()):
+    #         # Print only the first 3 hits
+    #         if i > 3:
+    #             continue
+    #         # Print current hit
+    #         print(hit)
+    #     # Print number of non printed hits
+    #     print('...and {:d} other'.format(i - 3))
+    #     print()
+    #
+    # # Test DOMTBLOUT iterator (domain hits)
+    # print('Retrieved domtblout (domains) hits:')
+    # # Read DOMTBLOUT file
+    # with DomainHits(domtblout_path) as hits:
+    #     # Loop through each hit
+    #     for i, hit in enumerate(hits.iterate()):
+    #         # Print only the first 3 hits
+    #         if i > 3:
+    #             continue
+    #         # Print current hit
+    #         print(hit)
+    #     # Print number of non printed hits
+    #     print('...and {:d} other'.format(i - 3))
+    #     print()
+    #
+    # # Test sequneces scores retrieval
+    # with SequenceHits(tblout_path) as hits:
+    #
+    #     # Retrieve scores
+    #     scores = hits.get_scores(e_value=0.1)
+    #     # Show sequence scores
+    #     print('Retrieved sequence scores (e-value set to 0.1): ')
+    #     # Loop through each query name
+    #     for curr_qname, curr_scores in scores.items():
+    #         # Print eithr query name and its scores
+    #         print(curr_qname, curr_scores)
+    #
+    #     # Retrieve sequences
+    #     sequences = hits.get_hits(scores)
+    #     # Show retrieved sequences
+    #     print('Retrieved sequence hits: ')
+    #     # Loop through each retrieved sequence
+    #     for curr_qname, curr_tname in sequences:
+    #         # Print either current query name and target name
+    #         print(curr_qname, curr_tname)
+    #
+    # # Test sequneces scores retrieval
+    # with DomainHits(domtblout_path) as hits:
+    #
+    #     # Retrieve scores
+    #     scores = hits.get_scores(e_value=0.1)
+    #     # Show sequence scores
+    #     print('Retrieved domain scores (e-value set to 0.1): ')
+    #     # Loop through each query name
+    #     for curr_qname, curr_scores in scores.items():
+    #         # Print eithr query name and its scores
+    #         print(curr_qname, curr_scores)
+    #
+    #     # Retrieve sequences
+    #     domains = hits.get_hits(scores)
+    #     # Show retrieved sequences
+    #     print('Retrieved domain hits: ')
+    #     # Loop through each retrieved sequence
+    #     for curr_qname, curr_tname in domains:
+    #         # Print either current query name and target name
+    #         print(curr_qname, curr_tname)
+    #
+    # # Remove temporary files
+    # os.remove(tblout_path)
+    # os.remove(domtblout_path)
+    #
+    # # Initialize scores dictionary
+    # scores = dict()
+    # # Define UniProt iterator
+    # uniprot_iter = iglob(UNIPROT_PATH)
+    # # Loop through first 3 example HMM models
+    # for i, chunk_path in enumerate(uniprot_iter):
+    #     # Initailize tblout and domtblout files
+    #     tblout_path = tempfile.NamedTemporaryFile(delete=False).name
+    #     domtblout_path = tempfile.NamedTemporaryFile(delete=False).name
+    #
+    #     # Make HMM search
+    #     hmm_search.run(
+    #         hmm_path=hmm_path,
+    #         target_path=chunk_path,
+    #         tblout_path=tblout_path,
+    #         domtblout_path=domtblout_path,
+    #         seq_e=1000,
+    #         seq_z=1e06,
+    #         num_cpus=1
+    #     )
+    #
+    #     # Retrieve scores
+    #     with SequenceHits(tblout_path) as hits:
+    #         # Retrieve scores
+    #         scores = hits.merge_scores([
+    #             scores,  # Previously stored scores
+    #             hits.get_scores(e_value=1)  # Newly retrieved scores
+    #         ])
+    #
+    #     # Print scores
+    #     print('Scores:')
+    #     for query_name, score in scores.items():
+    #         print(query_name, score)
+    #     print()
+    #
+    #     # Remove temporary files
+    #     os.remove(tblout_path)
+    #     os.remove(domtblout_path)
+    #
+    #     # Early stopping condition
+    #     if i >= 3:
+    #         break
