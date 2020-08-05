@@ -137,28 +137,45 @@ class HMMSearch(HMMER):
 
 class Tblout(object):
 
-    # Columns
-    columns = {
-        'target_name': 0,
-        'query_name': 2,
-        'e_value': 4,
-        'bit_score': 5
-    }
-
     # Constructor
     def __init__(self, path):
+        # Save path to file
+        self.path = path
         # Load file from path
-        with open(path, 'r') as file:
+        with open(self.path, 'r') as file:
             # Define file iterator
             iter = self.iterator(file)
             # Initialize inner table
             self.table = list()
             # Iterate through file and store table
             for row in iter:
+                # Merge by whitespace al columns after current width
+                row = row[:self.width - 1] + [' '.join(row[self.width:])]
                 # Add new line to inner table
                 self.table.append({
-                    col: row[i][1] for col, i in self.columns.items()
+                    col: row[i] for col, i in self.columns.items()
                 })
+                # # DEBUG
+                # print('Row:', row)
+                # print('Parsed:', self.table[-1])
+
+    @property
+    def width(self):
+        """ Number of total columns
+
+        This property is useful to determine columns in tblout (last is
+        description)
+        """
+        return 19
+
+    @property
+    def columns(self):
+        return {
+            'target_name': 0,
+            'query_name': 2,
+            'e_value': 4,
+            'bit_score': 5
+        }
 
     @staticmethod
     def iterator(iterable):
@@ -175,64 +192,21 @@ class Tblout(object):
                                     strings
 
         Return
-        (generator)                 List of rows: each row is a list, attributes
-                                    in row list are expressed as
-                                    tuple(non unique key, value)
+        (generator)                 List of rows: each row is a list whose
+                                    attributes are cell values
         """
-        # Skip first line
-        _ = next(iterable)
-        # Save second line (header, contains column names)
-        header_line = re.sub(r'[\n\r]', '', next(iterable))
-        header_line = re.sub(r'^#', ' ', header_line)  # Handle first character
-        # Save third line (bounds, define wether a column starts and ends)
-        bounds_line = re.sub(r'[\n\r]', '', next(iterable))
-        bounds_line = re.sub(r'^#', '-', bounds_line)  # Handle first character
-
-        # Initialize columns names and boundaries lists
-        columns, bounds = list(), list()
-        # Loop through each character in bounds line
-        for j in range(len(bounds_line)):
-            # Define if current character is gap
-            curr_gap = bool(re.search(r'\s', bounds_line[j]))
-            # Case this is the first character
-            if (j==0) and (not curr_gap):
-                # Define start of the first column
-                bounds.append((0, None))
-            # Otherwise
-            else:
-                # Define if previous character is gap
-                prev_gap = bool(re.search(r'\s', bounds_line[j-1]))
-                # Case current character is gap while previous is not
-                if curr_gap and (not prev_gap):
-                    # Update last column boundary
-                    bounds[-1] = (bounds[-1][0], j)
-                # Case current character is not gap, while previous is
-                elif (not curr_gap) and (prev_gap):
-                    # Add new column entry
-                    bounds.append((j, None))
-
-        # Update last bound to go until the end of the line
-        bounds[-1] = (bounds[-1][0], None)
-
-        # Define column names
-        columns = [(header_line[b[0]:b[1]]).strip() for b in bounds]
-
-        # Go through each remaining line in file
-        for line in iterable:
-            # Remove newlines
-            line = re.sub(r'[\n\r]', '', line)
-            # Check if line is comment
+        # Loop through each iterable lines
+        for i, line in enumerate(iterable):
+            # Check if current line is comment
             is_comment = re.search(r'^#', line)
             # Case current line is comment
             if is_comment:
-                continue  # Skip iteration
-            # Yield cureent output row
-            yield [
-                # Tuple (column name, cell value)
-                (columns[j], (line[bounds[j][0]:bounds[j][1]]).strip())
-                # Loop through each column
-                for j in range(len(bounds))
-            ]
+                # Skip line, go to next one
+                continue
+            # Clean line from strange characters
+            line = re.sub(r'[\n\r]$', '', line)
+            # Yield line splitted according to whitespaces
+            yield re.split(r'\s+', line)
 
     # Return dictionary associating each query name with a tuple (TC, NC, GA)
     def get_scores(self, e_value=0.01, min_bits=25.0, max_bits=999999.99):
@@ -260,21 +234,35 @@ class Tblout(object):
                             (hits below that value are considered significant)
         min_bits (float)    Minimum bit-score allowed
         max_bits (float)    Maximum bit-score allowed
+
         Return
         (dict)              Dictionary mapping cluster name to tuple(TC, NC, GA)
+
+        Raise
+        (ValueError)        In case there was an error parsing table rows
         """
 
         # Initialize scores dictionary mapping query name to tuple(TC, NC, GA)
         scores = dict()
         # Loop through each row in current file
-        for row in self.table:
+        for i, row in enumerate(self.table):
 
-            # Retrieve query name
-            curr_qname = str(row['query_name'])
-            # Retrieve e_value from current row
-            curr_eval = float(row['e_value'])
-            # Retrieve bit score from current row
-            curr_bits = float(row['bit_score'])
+            # Try to parse values
+            try:
+
+                # Retrieve query name
+                curr_qname = str(row['query_name'])
+                # Retrieve e_value from current row
+                curr_eval = float(row['e_value'])
+                # Retrieve bit score from current row
+                curr_bits = float(row['bit_score'])
+
+            except ValueError as err:
+                # Print current row and file path
+                print('File:', self.path)
+                print('Row ({:d}):'.format(i+1), row)
+                # Raise error
+                raise
 
             # Check if current e-value satisfies threshold
             if curr_eval < e_value:
@@ -361,13 +349,23 @@ class Tblout(object):
 
 class Domtblout(Tblout):
 
-    # Columns
-    columns = {
-        'target_name': 0,
-        'query_name': 3,
-        'e_value': 12,
-        'bit_score': 13
-    }
+    @property
+    def width(self):
+        """ Number of total columns
+
+        This property is useful to determine columns in tblout (last is
+        description)
+        """
+        return 23
+
+    @property
+    def columns(self):
+        return {
+            'target_name': 0,
+            'query_name': 3,
+            'e_value': 12,
+            'bit_score': 13
+        }
 
 
 # Utility: merge scores dictionary
@@ -482,6 +480,11 @@ if __name__ == '__main__':
     tblout_path = tempfile.NamedTemporaryFile(delete=False, suffix='.tblout').name
     domtblout_path = tempfile.NamedTemporaryFile(delete=False, suffix='.domtblout').name
 
+    # Define new MGnifam dataset
+    mgnifam = Fasta.from_str(MGNIFAM_PATH)
+    # Define MGnifam dataset chunk
+    chunk = mgnifam[0]
+
     # Retrieve HMM from given cluster
     hmm_path = os.path.join(cluster_path, 'HMM')
     # Retrieve first chunk of UniProt
@@ -495,7 +498,7 @@ if __name__ == '__main__':
         tblout_path=tblout_path,
         domtblout_path=domtblout_path,
         seq_e=1e03,
-        seq_z=chunk_size,
+        seq_z=900000,
         num_cpus=1
     )
 
@@ -504,6 +507,24 @@ if __name__ == '__main__':
     print('  {:s}'.format(tblout_path))
     print('  {:s}'.format(domtblout_path))
     print()
+
+    # Open TBLOUT file
+    tblout = Tblout(tblout_path)
+    # Print TBLOUT
+    print('Tblout:')
+    for row in tblout.table:
+        print(row)
+
+    # Open DOMTBLOUT file
+    domtblout = Domtblout(domtblout_path)
+    # Print DOMTBLOUT
+    print('Domtblout:')
+    for row in domtblout.table:
+        print(row)
+
+    # Remove either TBLOUT and DOMTBLOUT files
+    os.remove(tblout_path)
+    os.remove(domtblout_path)
 
     # # Test iterator for tblout (sequences)
     # print('Retrieved tblout rows (sequence hits):')

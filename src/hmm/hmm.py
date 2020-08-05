@@ -8,8 +8,9 @@ import re
 class HMM(object):
 
     # Constructor
-    def __init__(self, name='', length=0, alphabet='amino'):
+    def __init__(self, path='', name='', length=0, alphabet='amino'):
         # HMM attributes
+        self.path = path
         self.name = name
         self.length = length
         self.alphabet = alphabet
@@ -65,7 +66,7 @@ class HMM(object):
         # Close file buffer
         file.close()
         # Return new HMM instance with retrieved params
-        return cls(**params)
+        return cls(path=path, **params)
 
     @classmethod
     def concat(cls, in_paths, out_path):

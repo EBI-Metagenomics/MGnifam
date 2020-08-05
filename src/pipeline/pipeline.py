@@ -85,10 +85,10 @@ class Pipeline(object):
     # Close Dask cluster and client
     @staticmethod
     def close_client(cluster, client):
-        # Close cluster first
-        cluster.close()
-        # Then, close client
+        # First, close client
         client.close()
+        # Then, close cluster
+        cluster.close()
 
     # Wrapper for run method
     def __call__(self, *args, **kwargs):

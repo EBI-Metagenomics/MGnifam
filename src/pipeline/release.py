@@ -48,8 +48,8 @@ class ReleasePipeline(object):
         # Environmental variables
         env=os.environ.copy()
     ):
-        # TODO Set batch inner pipeline
-        # TODO Set build inner pipeline
+        # TODO Set inner build pipeline
+        # TODO Set upload pipeline
         raise NotImplementedError
 
     def run(self, cluster_names, clusters_path, batch_size=1, max_clusters=1000, verbose=False):

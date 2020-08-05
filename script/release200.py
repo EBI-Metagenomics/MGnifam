@@ -2,6 +2,7 @@
 from dask.distributed import LocalCluster
 from dask_jobqueue import LSFCluster
 import argparse
+import json
 import sys
 import os
 import re
@@ -10,9 +11,8 @@ import re
 sys.path.append(os.path.dirname(__file__) + '/..')
 
 # Custom dependencies
-# from src.pipeline.release import ReleasePipeline
-from src.pipeline.batch import Batch
-from src.utils import get_paths
+from src.pipeline.build import Build
+from src.pipeline.build import get_cluster_names
 
 # Constants
 ROOT_PATH = os.path.dirname(__file__) + '/..'
@@ -20,90 +20,31 @@ LINCLUST_PATH = ROOT_PATH + '/data_/clusters/chunk*.tsv.gz'
 MGNIFAM_PATH = ROOT_PATH + '/data_/mgnify/chunk*.fa.gz'
 UNIPROT_PATH = ROOT_PATH + '/data_/uniprot/chunk*.fa.gz'
 
-# Iterate clusters file
-def iter_clusters(in_path, batch_size=100, max_clusters=None):
-    """Iterate through clusters files
-
-    Args
-    clusters_paths (str/list)   Path or list of paths to linclust files
-    batch_size (int)            Maximum number of clusters per batch
-    max_clusters (int)          Maximum number of clusters to iterate
-
-    Return
-    (generator)                 A generator that yelds batch as
-                                tuple(batch index, cluster names)
-    """
-    # Initialize current cluster index
-    cluster_index = 0
-    # Initialize current batch index
-    batch_index = 0
-    # Initialize current batch of clusters
-    batch_clusters = list()
-    # Loop through each file input path
-    for curr_path in get_paths(in_path):
-        # Open file at current path
-        with open(curr_path, 'r') as file:
-            # Loop through each line in current linclust file path
-            for line in file:
-
-                # Check if current line is matches expected format
-                match = re.search(r'^(\S+)\s+(\d+)', line)
-                # Case line does not match expected format: skip
-                if not match:
-                    continue
-
-                # Otherwise, retrieve cluster name and cluster size
-                cluster_name = str(match.group(1))
-                cluster_size = int(match.group(2))
-                # Add current cluster name to batch
-                batch_clusters.append(cluster_name)
-                # Update current cluster index
-                cluster_index += 1
-                # Define batch index
-                batch_index = (cluster_index - 1) // batch_size
-
-                # Case cluster index has reached maximum size, exit loop
-                if max_clusters is not None:
-                    if cluster_index >= max_clusters:
-                        break
-                # Ensure cluster index has not reached batch size
-                if (cluster_index % batch_size) != 0:
-                    continue
-
-                # Otherwise, yield batch index and list of clusters
-                yield batch_index, batch_clusters
-                # Reset batch of clusters
-                batch_clusters = list()
-
-            # Case cluster index has reached maximum size, exit loop
-            if max_clusters is not None:
-                if cluster_index >= max_clusters:
-                    break
-
-    # In case we reached this point, check for non returned clusters
-    if len(batch_clusters) > 0:
-        # Yield last batch
-        yield batch_index, batch_clusters
-
 # Main
 if __name__ == '__main__':
-
-    # Define list of available cluster types
-    cluster_types = {
-        'LSF': LSFCluster,
-        'local': LocalCluster
-    }
 
     # Define new argument parser
     parser = argparse.ArgumentParser(description='Make new MGnifam release')
     # Feed command line arguments to it
     parser.add_argument(
-        '-o', '--out_path', type=str, required=True,
-        help='Output path where release will be stored'
+        '-o', '--release_path', type=str, required=True,
+        help='Path where to store new release'
     )
     parser.add_argument(
-        '-i', '--in_path', type=str, required=True,
-        help='Path where files holding cluster names are stored'
+        '-i', '--input_path', nargs='+', type=str, required=True,
+        help='Path to files holding cluster names'
+    )
+    parser.add_argument(
+        '--shuffle', type=int, default=0,
+        help='Whether to shuffle input cluster names'
+    )
+    parser.add_argument(
+        '--batch_size', type=int, default=100,
+        help='Maximum number of clusters to elaborate at each iterations'
+    )
+    parser.add_argument(
+        '--max_clusters', type=int, default=0,
+        help='Maximum number of clusters to elaborate'
     )
     parser.add_argument(
         '--linclust_path', type=str, default=LINCLUST_PATH,
@@ -114,12 +55,52 @@ if __name__ == '__main__':
         help='Path to UniProt clusters dataset'
     )
     parser.add_argument(
+        '--uniprot_height', type=int, required=False,
+        help='Number of sequences in UniProt dataset'
+    )
+    parser.add_argument(
+        '--uniprot_width', type=int, required=False,
+        help='Length of longest sequence in UniProt dataset'
+    )
+    parser.add_argument(
         '--mgnifam_path', type=str, default=MGNIFAM_PATH,
         help='Path to MGnifam clusters dataset'
     )
     parser.add_argument(
+        '--mgnifam_height', type=int, required=False,
+        help='Number of sequences in MGnifam dataset'
+    )
+    parser.add_argument(
+        '--mgnifam_width', type=int, required=False,
+        help='Length of longest sequence in MGnifam dataset'
+    )
+    parser.add_argument(
+        '--mobidb_cmd', nargs='+', type=str, default=['mobidb_lite.py'],
+        help='Command for MobiDB Lite disorder predictor script'
+    )
+    parser.add_argument(
+        '--muscle_cmd', nargs='+', type=str, default=['muscle'],
+        help='Command for Muscle Multiple Sequence Alignment script'
+    )
+    parser.add_argument(
+        '--hmmsearch_cmd', nargs='+', type=str, default=['hmmsearch'],
+        help='Command for HMM search script'
+    )
+    parser.add_argument(
+        '--hmmbuild_cmd', nargs='+', type=str, default=['hmmbuild'],
+        help='Command for HMM build script'
+    )
+    parser.add_argument(
+        '--hmmalign_cmd', nargs='+', type=str, default=['hmmalign'],
+        help='Command for HMM align script'
+    )
+    parser.add_argument(
         '-v', '--verbose', type=int, default=1,
         help='Whether to print verbose log or not'
+    )
+    parser.add_argument(
+        '-e', '--e_value', type=float, default=0.01,
+        help='E-value threhsold for both UniProt and MGnifam comparisons'
     )
     parser.add_argument(
         '-c', '--cores', type=int, default=2,
@@ -130,58 +111,113 @@ if __name__ == '__main__':
         help='Maximum amount of memory per job'
     )
     parser.add_argument(
-        '--cluster', type=str, default='LSF',
+        '-q', '--queue', type=str, required=None,
+        help='Queue where to run jobs'
+    )
+    parser.add_argument(
+        '--min_jobs', type=int, default=0,
+        help='Minimum number of jobs to run in parallel'
+    )
+    parser.add_argument(
+        '--max_jobs', type=int, default=100,
+        help='Maximum number of jobs to run in parallel'
+    )
+    parser.add_argument(
+        '--cluster_type', type=str, default='LSF',
         help='Type of cluster to use (only LSFCluster implemented yet)'
     )
     parser.add_argument(
-        '--env', type=str, required=False,
+        '--walltime', type=str, default='48:00',
+        help='Time a job must be kept active, HH:MM format'
+    )
+    parser.add_argument(
+        '--environ_path', type=str, required=False,
         help='Path to JSON storing environmental variables'
     )
     # Parse the arguments defined above
     args = parser.parse_args()
 
+    # Define list of available cluster types
+    cluster_types = {
+        'LSF': LSFCluster,
+        'local': LocalCluster
+    }
+
+    # Retrieve cluster type
+    cluster_type = args.cluster_type
     # Set type of cluster
-    if args.cluster not in cluster_types.keys():
+    if cluster_type not in cluster_types.keys():
         # Raise new exception and interrupt execution
         raise KeyError(' '.join([
-            'Given cluster type {:s}'.format(args.cluster),
+            'Given cluster type {:s}'.format(cluster_type),
             'is not available, please choose one among these:',
-            '[' + ', '.join(cluster_types.values()) + ']'
+            '[' + ', '.join([*cluster_types.values()]) + ']'
         ]))
+    #
+    # # Set environmental variables
+    # env = {**os.environ.copy(), **{
+    #     'PATH': ':'.join([
+    #         "/nfs/production/metagenomics/mgnifams/dclementel/Pfam/PfamScripts/make",
+    #         "/nfs/production/xfam/pfam/software/bin",
+    #         "/nfs/production/metagenomics/mgnifams/dclementel/Pfam/PfamScripts/mgnifam",
+    #         "/usr/lib64/qt-3.3/bin",
+    #         "/ebi/lsf/ebi/ppm/10.2/bin",
+    #         "/ebi/lsf/ebi/ppm/10.2/linux2.6-glibc2.3-x86_64/bin",
+    #         "/ebi/lsf/ebi/10.1/linux3.10-glibc2.17-x86_64/etc",
+    #         "/ebi/lsf/ebi/10.1/linux3.10-glibc2.17-x86_64/bin",
+    #         "/usr/lpp/mmfs/bin",
+    #         "/usr/local/bin",
+    #         "/usr/bin",
+    #         "/usr/local/sbin",
+    #         "/usr/sbin",
+    #         "/bin",
+    #         "/usr/bin",
+    #         "/homes/dclementel/bin"
+    #     ]),
+    #     'PYTHONPATH': ':'.join([
+    #         '/ebi/sp/pro1/interpro/python-modules/lib64/python',
+    #         '/ebi/sp/pro1/interpro/python-modules/lib/python'
+    #     ])
+    # }}
 
-    # Set environmental variables
-    env = {**os.environ.copy(), **{
-        'PATH': ':'.join([
-            "/nfs/production/metagenomics/mgnifams/dclementel/Pfam/PfamScripts/make",
-            "/nfs/production/xfam/pfam/software/bin",
-            "/nfs/production/metagenomics/mgnifams/dclementel/Pfam/PfamScripts/mgnifam",
-            "/usr/lib64/qt-3.3/bin",
-            "/ebi/lsf/ebi/ppm/10.2/bin",
-            "/ebi/lsf/ebi/ppm/10.2/linux2.6-glibc2.3-x86_64/bin",
-            "/ebi/lsf/ebi/10.1/linux3.10-glibc2.17-x86_64/etc",
-            "/ebi/lsf/ebi/10.1/linux3.10-glibc2.17-x86_64/bin",
-            "/usr/lpp/mmfs/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/usr/local/sbin",
-            "/usr/sbin",
-            "/bin",
-            "/usr/bin",
-            "/homes/dclementel/bin"
-        ]),
-        'PYTHONPATH': ':'.join([
-            '/ebi/sp/pro1/interpro/python-modules/lib64/python',
-            '/ebi/sp/pro1/interpro/python-modules/lib/python'
-        ])
-    }}
+    # Initialize environmental variables
+    env = dict()
+    # Retrieve path to environment file
+    environ_path = args.environ_path
+    # Check if environment dictionary has been set
+    if os.path.isfile(environ_path):
+        # Open environmental variables file
+        with open(environ_path, 'r') as env_file:
+            # Update environmental variables
+            env = json.load(env_file)
+    # Loop through every key in retrieved dictionary
+    for key, value in env.items():
+        # Case calue is not a list
+        if not isinstance(value, list):
+            # Skip iteration, keep entry as is
+            continue
+        # Otherwise, join list as string, using double dots separators
+        env[key] = ':'.join(value)
+    # Merge current environmental variables with retrieved ones
+    env = {**os.environ.copy(), **env}
 
-    # Initialize batch pipeline
-    pipeline = Batch(
+    # Retrieve release path
+    release_path = args.release_path
+    # Check existence output directory
+    if not os.path.exists(release_path):
+        # Make output directory
+        os.mkdir(release_path)
+
+    # Initialize build pipeline
+    pipeline = Build(
         # Pipeline parameters, required to handle job scheduling
-        cluster_type=cluster_types.get(args.cluster),
+        cluster_type=cluster_types.get(cluster_type),
         cluster_kwargs={
             'cores': args.cores,
             'memory': args.memory,
+            'queue': args.queue,
+            'walltime': args.walltime,
+            'use_stdin': True,
             'processes': 1
         },
         # Path to datasets (fixed)
@@ -196,33 +232,50 @@ if __name__ == '__main__':
         # Post trimming settings
         seed_min_width=1, seed_min_height=1,
         # Search against UniProt settings
-        uniprot_e_value=0.01, uniprot_z_score=None,
+        uniprot_e_value=args.e_value,
+        uniprot_height=args.uniprot_height,
+        uniprot_width=args.uniprot_width,
+        # Search against MGnifam settings
+        mgnifam_e_value=args.e_value,
+        mgnifam_height=args.mgnifam_height,
+        mgnifam_width=args.mgnifam_width,
         # Command line arguments
-        mobidb_cmd=['mobidb_lite.py'],  # Path to MobiDB Lite predictor
-        muscle_cmd=['muscle'],  # Path to Muscle alignment algorithm
-        hmm_build_cmd=['hmmbuild'],  # Path to hmmbuild script
-        hmm_search_cmd=['hmmsearch'],  # Path to hmmsearch script
+        mobidb_cmd=args.mobidb_cmd,  # Path to MobiDB Lite predictor
+        muscle_cmd=args.muscle_cmd,  # Path to Muscle alignment algorithm
+        hmm_build_cmd=args.hmmbuild_cmd,  # Path to hmmbuild script
+        hmm_search_cmd=args.hmmsearch_cmd,  # Path to hmmsearch script
+        hmm_align_cmd=args.hmmalign_cmd,  # Path to hmmalign script
         # Environmental variables
         env=env
     )
 
-    # Get cluster names
-    batch_index, cluster_names = next(iter_clusters(
-        in_path=args.in_path,
-        batch_size=100,
-        max_clusters=100
-    ))
+    # Retrieve input path and shuffle selector
+    input_path = args.input_path
+    shuffle = bool(args.shuffle)
+    # Define clusters iterator
+    cluster_names = get_cluster_names(paths=input_path, shuffle=shuffle)
 
-    # Check existence output directory
-    if not os.path.exists(args.out_path):
-        # Make output directory
-        os.mkdir(args.out_path)
-
-    # Run the pipeline
-    pipeline(
-        cluster_names=cluster_names,
-        clusters_path=args.out_path,
-        min_jobs=1,
-        max_jobs=100,
-        verbose=bool(args.verbose)
-    )
+    # Define number of clusters
+    num_clusters = len(cluster_names)
+    # Define maximum number of clusters to elaborate
+    max_clusters = args.max_clusters if args.max_clusters else num_clusters
+    # Threshold maximum number of clusters to elaborate
+    num_clusters = min(num_clusters, max_clusters)
+    # Retrieve batch size
+    batch_size = args.batch_size
+    # Loop through each batch of cluster names
+    for i in range(0, num_clusters, batch_size):
+        # Define batch index
+        batch_index = str(i // batch_size)
+        # Define directory for current batch
+        batch_path = os.path.join(release_path, 'batches', batch_index)
+        # make directory for current batch
+        os.makedirs(batch_path, exist_ok=True)
+        # Run pipeline for current batch of cluster names
+        pipeline(
+            cluster_names=cluster_names[i:min(num_clusters, i+batch_size)],
+            clusters_path=batch_path,
+            min_jobs=args.min_jobs,
+            max_jobs=args.max_jobs,
+            verbose=bool(args.verbose)
+        )

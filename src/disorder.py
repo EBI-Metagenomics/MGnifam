@@ -289,7 +289,7 @@ if __name__ == '__main__':
     # Make new instance of MobiDB Lite
     mobidb = MobiDbLite(env=env)
     # Run MobiDB Lite predictor, get disordered regions
-    disorder = mdb_lite.run(fasta_sequences, verbose=True)
+    disorder = mobidb.run(fasta_sequences, verbose=True)
     # Debug
     print('Predictions:')
     # print(json.dumps(disorder, indent=1))
