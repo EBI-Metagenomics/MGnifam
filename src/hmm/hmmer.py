@@ -1,6 +1,8 @@
 # Dependencies
+from tempfile import NamedTemporaryFile
+from glob import iglob
+from time import time
 import subprocess
-import re
 import os
 
 
@@ -78,7 +80,7 @@ class HMMAlign(HMMER):
         super().__init__(cmd=cmd, env=env)
 
     # Run HMM align
-    def run(self, hmm_path, fasta_path, out_path='/dev/stdout'):
+    def run(self, hmm_path, fasta_path, out_path):
         """Align an HMM model with a FASTA dataset
 
         Args
@@ -108,3 +110,41 @@ class HMMAlign(HMMER):
             env=self.env,  # Set script environment
             args=cmd  # Set command line arguments
         )
+
+
+# Unit testing
+if __name__ == '__main__':
+
+    # Define root directory
+    ROOT_PATH = os.path.dirname(__file__) + '/../..'
+    # Define temporary directory path
+    TEMP_PATH = ROOT_PATH + '/tmp'
+    # Example clusters directory
+    EXAMPLE_PATH = TEMP_PATH + '/examples/MGYP*'
+
+    # Define path to first cluster
+    cluster_path = next(iglob(EXAMPLE_PATH))
+    # Get first HMM model
+    hmm_path = os.path.join(cluster_path, 'HMM')
+    # Get FASTA file
+    fasta_path = os.path.join(cluster_path, 'FA')
+
+    # Define temporary output file
+    out_path = NamedTemporaryFile(dir=os.getcwd(), delete=False, suffix='.sto').name
+    # Log
+    print('Making HMM alignment of {:s}'.format(out_path))
+
+    # Define hmmalign script wrapper instance
+    hmm_align = HMMAlign()
+
+    # Initialize timers
+    time_beg, time_end = time(), 0.0
+    # Run hmmalign script
+    hmm_align(hmm_path, fasta_path, out_path)
+    # Update timers
+    time_end = time()
+    time_tot = time_end - time_beg
+
+    # Log
+    print('Generated HMM alignment in {:.0f}'.format(time_tot), end=' ')
+    print('at {:s}'.format(out_path))

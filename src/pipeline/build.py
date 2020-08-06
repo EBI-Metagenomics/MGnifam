@@ -60,9 +60,9 @@ class Build(Pipeline):
         # Call parent constructor
         super().__init__(cluster_type, cluster_kwargs)
         # Save datasets path
-        self.linclust = LinClust.from_str(linclust_path)
-        self.mgnifam = Fasta.from_str(mgnifam_path)
-        self.uniprot = Fasta.from_str(uniprot_path)
+        self.linclust = LinClust.from_list(linclust_path)
+        self.mgnifam = Fasta.from_list(mgnifam_path)
+        self.uniprot = Fasta.from_list(uniprot_path)
         # Save compositional bias parameters
         self.comp_bias_threshold = comp_bias_threshold
         self.comp_bias_inclusive = comp_bias_inclusive
@@ -1703,21 +1703,21 @@ class Build(Pipeline):
             verbose=verbose
         )
 
-        # DEBUG
-        # Show number of sequences checked
-        print('Number of retrieved sequences:', num_sequences)
-        # Store fasta sequences file
-        with open(os.path.join(clusters_path, 'fasta_sequences.json'), 'w') as f:
-            # Write to file
-            json.dump(fasta_sequences, f, indent=2)
+        # # DEBUG
+        # # Show number of sequences checked
+        # print('Number of retrieved sequences:', num_sequences)
+        # # Store fasta sequences file
+        # with open(os.path.join(clusters_path, 'fasta_sequences.json'), 'w') as f:
+        #     # Write to file
+        #     json.dump(fasta_sequences, f, indent=2)
 
-        # # Align cluster sequences to HMM using hmmalign
-        # self.make_hmm_alignments(
-        #     clusters_path=clusters_path,
-        #     fasta_sequences=fasta_sequences,
-        #     cluster_members=domain_hits,
-        #     client=client
-        # )
+        # Align cluster sequences to HMM using hmmalign
+        self.make_hmm_alignments(
+            clusters_path=clusters_path,
+            fasta_sequences=fasta_sequences,
+            cluster_members=domain_hits,
+            client=client
+        )
 
         # Close client
         self.close_client(cluster, client)
@@ -1733,7 +1733,7 @@ class Build(Pipeline):
         # Initialize futures
         futures = list()
         # Loop through each cluster path
-        for cluster_path in clusters_path:
+        for cluster_path in glob(os.path.join(clusters_path, 'MGYP*')):
             # Define cluster name
             cluster_name = os.path.basename(cluster_path)
             # Define fet of sequence accession from cluster members
@@ -1747,7 +1747,7 @@ class Build(Pipeline):
                 hmm_align=self.hmm_align
             ))
         # Gather all futures
-        results = client.gather(futures)
+        client.gather(futures)
 
     @staticmethod
     def align_hmm_cluster(cluster_path, fasta_sequences, sequences_acc, hmm_align):
@@ -1777,7 +1777,7 @@ class Build(Pipeline):
             ]))
 
         # Define fasta path
-        fasta_path = NamedTemporaryFile(delete=False, suffix='.fa')
+        fasta_path = NamedTemporaryFile(delete=False, suffix='.fa').name
         # Fill fasta file with sequences
         with open(fasta_path, 'w') as fasta_file:
             # Loop through each cluster members
@@ -1807,10 +1807,10 @@ class Build(Pipeline):
         # Remove temporary fasta file
         os.remove(fasta_path)
 
-        # TODO Load retrieved alignment file
-        align = MSA.from_sto(sto_path)
-        # TODO Parse loaded alignment file
-        align.to_aln(aln_path)
+        # # TODO Load retrieved alignment file
+        # align = MSA.from_sto(sto_path)
+        # # TODO Parse loaded alignment file
+        # align.to_aln(aln_path)
 
 
 # Utility: retrieve cluster names from TSV files

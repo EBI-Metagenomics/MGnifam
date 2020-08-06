@@ -1,6 +1,7 @@
 # Dependencies
 from dask.distributed import LocalCluster
 from dask_jobqueue import LSFCluster
+from glob import glob
 import argparse
 import json
 import sys
@@ -47,11 +48,11 @@ if __name__ == '__main__':
         help='Maximum number of clusters to elaborate'
     )
     parser.add_argument(
-        '--linclust_path', type=str, default=LINCLUST_PATH,
+        '--linclust_path', nargs='+', type=str, default=glob(LINCLUST_PATH),
         help='Path to LinClust clusters dataset'
     )
     parser.add_argument(
-        '--uniprot_path', type=str, default=UNIPROT_PATH,
+        '--uniprot_path', nargs='+', type=str, default=glob(UNIPROT_PATH),
         help='Path to UniProt clusters dataset'
     )
     parser.add_argument(
@@ -63,7 +64,7 @@ if __name__ == '__main__':
         help='Length of longest sequence in UniProt dataset'
     )
     parser.add_argument(
-        '--mgnifam_path', type=str, default=MGNIFAM_PATH,
+        '--mgnifam_path', nargs='+', type=str, default=glob(MGNIFAM_PATH),
         help='Path to MGnifam clusters dataset'
     )
     parser.add_argument(
