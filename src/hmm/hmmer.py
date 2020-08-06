@@ -1,4 +1,5 @@
 # Dependencies
+from subprocess import CalledProcessError
 from tempfile import NamedTemporaryFile
 from glob import iglob
 from time import time
@@ -96,11 +97,11 @@ class HMMAlign(HMMER):
         (Error)                 Unknown error
         """
         # Define command
-        cmd = [self.cmd]
+        cmd = self.cmd
         # Set mandatory command line options
+        cmd += ['-o', out_path]  # Output file path
         cmd += [hmm_path]  # HMM model file path
         cmd += [fasta_path]   # Target dataset file path
-        cmd += ['>', out_path]  # Output file path
 
         # Execute script
         return subprocess.run(
@@ -137,14 +138,24 @@ if __name__ == '__main__':
     # Define hmmalign script wrapper instance
     hmm_align = HMMAlign()
 
-    # Initialize timers
-    time_beg, time_end = time(), 0.0
-    # Run hmmalign script
-    hmm_align(hmm_path, fasta_path, out_path)
-    # Update timers
-    time_end = time()
-    time_tot = time_end - time_beg
+    # Try to run script
+    try:
+        # Initialize timers
+        time_beg, time_end = time(), 0.0
+        # Run hmmalign script
+        hmm_align(hmm_path, fasta_path, out_path)
+        # Update timers
+        time_end = time()
+        time_tot = time_end - time_beg
 
-    # Log
-    print('Generated HMM alignment in {:.0f}'.format(time_tot), end=' ')
-    print('at {:s}'.format(out_path))
+        # Log
+        print('Generated HMM alignment in {:.0f}'.format(time_tot), end=' ')
+        print('at {:s}'.format(out_path))
+
+    except CalledProcessError as err:
+        # Show error
+        print('Error: hmmalign exited with code {}:'.format(err.returncode))
+        print(err.stderr.strip())
+        print(err.stdout.strip())
+        # Raise error
+        raise
