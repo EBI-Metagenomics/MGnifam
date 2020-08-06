@@ -311,14 +311,14 @@ class Build(Pipeline):
             verbose=verbose
         )
 
-        # Run search against MGnifam sub-pipeline
-        self.search_hmm_mgnifam(
-            clusters_path=clusters_path,
-            mgnifam_shape=mgnifam_shape,
-            min_jobs=min_jobs,
-            max_jobs=max_jobs,
-            verbose=verbose
-        )
+        # # Run search against MGnifam sub-pipeline
+        # self.search_hmm_mgnifam(
+        #     clusters_path=clusters_path,
+        #     mgnifam_shape=mgnifam_shape,
+        #     min_jobs=min_jobs,
+        #     max_jobs=max_jobs,
+        #     verbose=verbose
+        # )
 
         # Update timers
         time_end = time()
@@ -1204,74 +1204,124 @@ class Build(Pipeline):
         (dict)      Dictionary mapping cluster name to sequences hits
         (dict)      Dictionary mapping cluster name to domains hits
         """
-
-        # Initialize futures
-        futures = list()
+        # # Initialize results list
+        # results = list()
+        # # Initialize futures
+        # futures = list()
+        # Initialize sequence scores
+        sequence_scores = dict()
         # Loop through each sequence TBLOUT file
         for tblout_path in tblout_paths:
-            # Distribute scores retrieval function
-            futures.append(client.submit(
-                func=self.parse_search_scores,
+            # Compute scores on current chunk
+            scores = self.parse_search_scores(
                 tblout_type='sequences',
                 tblout_path=tblout_path,
                 e_value=e_value,
                 min_bits=25.0,
                 max_bits=999999.99
-            ))
-        # Gather results
-        results = client.gather(futures)
-        # Merge all retrieved scores
-        sequence_scores = merge_scores(*results)
+            )
+            # Update sequence scores
+            sequence_scores = merge_scores(sequence_scores, scores)
+            # # Distribute scores retrieval function
+            # futures.append(client.submit(
+            #     func=self.parse_search_scores,
+            #     tblout_type='sequences',
+            #     tblout_path=tblout_path,
+            #     e_value=e_value,
+            #     min_bits=25.0,
+            #     max_bits=999999.99
+            # ))
+        # # Gather results
+        # results = client.gather(futures)
+        # # Merge all retrieved scores
+        # sequence_scores = merge_scores(*results)
 
-        # Reinitialize futures
-        futures = list()
+        # # Reinitialize futures
+        # futures = list()
+        # Initialize sequence hits
+        sequence_hits = dict()
         # Loop through each TBLOUT file
         for tblout_path in tblout_paths:
-            # Distribute hits retrieval function
-            futures.append(client.submit(
-                func=self.parse_search_hits,
+            # Retrieve sequence hits
+            hits = self.parse_search_hits(
                 tblout_type='sequences',
                 tblout_path=tblout_path,
                 scores=sequence_scores
-            ))
-        # Gather results (list of dictionaries mapping clusters to sequences)
-        results = client.gather(futures)
-        # Merge all retrieved dictionaries
-        sequence_hits = merge_hits(*results)
+            )
+            # Update sequence hits
+            sequence_hits = merge_hits(sequence_hits, hits)
+            # # Distribute hits retrieval function
+            # futures.append(client.submit(
+            #     func=self.parse_search_hits,
+            #     tblout_type='sequences',
+            #     tblout_path=tblout_path,
+            #     scores=sequence_scores
+            # ))
+        # # Gather results (list of dictionaries mapping clusters to sequences)
+        # results = client.gather(futures)
+        # # Merge all retrieved dictionaries
+        # sequence_hits = merge_hits(*results)
 
-        # Reinitialize futures
-        futures = list()
+        # # Reinitialize futures
+        # futures = list()
+        # Initialize domain scores
+        domain_scores = dict()
         # Loop through each sequence DOMTBLOUT file
         for domtblout_path in domtblout_paths:
-            # Distribute scores retrieval function
-            futures.append(client.submit(
-                func=self.parse_search_scores,
+            # Retrieve domain scores
+            scores = self.parse_search_scores(
                 tblout_type='domains',
                 tblout_path=domtblout_path,
                 e_value=e_value,
                 min_bits=25.0,
                 max_bits=999999.99
-            ))
-        # Gather results
-        results = client.gather(futures)
-        # Merge all retrieved scores
-        domain_scores = merge_scores(*results)
+            )
+            # Update domain scores
+            domain_scores = merge_scores(domain_scores, scores)
+            # # Distribute scores retrieval function
+            # futures.append(client.submit(
+            #     func=self.parse_search_scores,
+            #     tblout_type='domains',
+            #     tblout_path=domtblout_path,
+            #     e_value=e_value,
+            #     min_bits=25.0,
+            #     max_bits=999999.99
+            # ))
+        # # Gather results
+        # results = client.gather(futures)
+        # # Merge all retrieved scores
+        # domain_scores = merge_scores(*results)
 
-        # Reinitialize futures
-        futures = list()
+        # # Reinitialize futures
+        # futures = list()
+        # Initialize domain hits dict
+        domain_hits = dict()
         # Loop through each DOMTBLOUT file
         for domtblout_path in domtblout_paths:
-            # Distribute hits retrieval function
-            futures.append(client.submit(
-                func=self.parse_search_hits,
+            # Retrieve hits
+            hits = self.parse_search_hits(
                 tblout_type='domains',
                 tblout_path=domtblout_path,
                 scores=domain_scores
-            ))
-        # Gather results (list of dictionaries mapping clusters to sequences)
-        results = client.gather(futures)
-        # Merge all retrieved dictionaries
-        domain_hits = merge_hits(*results)
+            )
+            # Keep only domains which have also a hit in sequences
+            hits = {
+                qname: hits[qname] for qname
+                in (set(hits.keys()) & set(sequence_hits.keys()))
+            }
+            # Update domain hits
+            domain_hits = merge_hits(domain_hits, hits)
+            # # Distribute hits retrieval function
+            # futures.append(client.submit(
+            #     func=self.parse_search_hits,
+            #     tblout_type='domains',
+            #     tblout_path=domtblout_path,
+            #     scores=domain_scores
+            # ))
+        # # Gather results (list of dictionaries mapping clusters to sequences)
+        # results = client.gather(futures)
+        # # Merge all retrieved dictionaries
+        # domain_hits = merge_hits(*results)
 
         # Return sequence scores and sequence hits
         return sequence_scores, domain_scores, sequence_hits, domain_hits
