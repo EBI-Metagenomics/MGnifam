@@ -251,7 +251,23 @@ subprocesses (passing a properly formatted JSON file to
 **Usage**
 
 ```
-release200.py [-h] --in_path IN_PATH [IN_PATH ...] --out_path OUT_PATH
-                   -a AUTHOR_NAME [-n MAX_CLUSTERS] [-b BATCH_SIZE]
-                   [-v VERBOSE] [-e ENV_PATH]
+release200.py [-h] -o RELEASE_PATH -i INPUT_PATH [INPUT_PATH ...]
+                     [--shuffle SHUFFLE] [--batch_size BATCH_SIZE]
+                     [--max_clusters MAX_CLUSTERS]
+                     [--linclust_path LINCLUST_PATH]
+                     [--uniprot_path UNIPROT_PATH]
+                     [--uniprot_height UNIPROT_HEIGHT]
+                     [--uniprot_width UNIPROT_WIDTH]
+                     [--mgnifam_path MGNIFAM_PATH]
+                     [--mgnifam_height MGNIFAM_HEIGHT]
+                     [--mgnifam_width MGNIFAM_WIDTH]
+                     [--mobidb_cmd MOBIDB_CMD [MOBIDB_CMD ...]]
+                     [--muscle_cmd MUSCLE_CMD [MUSCLE_CMD ...]]
+                     [--hmmsearch_cmd HMMSEARCH_CMD [HMMSEARCH_CMD ...]]
+                     [--hmmbuild_cmd HMMBUILD_CMD [HMMBUILD_CMD ...]]
+                     [--hmmalign_cmd HMMALIGN_CMD [HMMALIGN_CMD ...]]
+                     [-v VERBOSE] [-e E_VALUE] [-c CORES] [-m MEMORY]
+                     [-q QUEUE] [--min_jobs MIN_JOBS] [--max_jobs MAX_JOBS]
+                     [--cluster_type CLUSTER_TYPE] [--walltime WALLTIME]
+                     [--environ_path ENVIRON_PATH]
 ```

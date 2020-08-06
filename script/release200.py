@@ -16,9 +16,9 @@ from src.pipeline.build import get_cluster_names
 
 # Constants
 ROOT_PATH = os.path.dirname(__file__) + '/..'
-LINCLUST_PATH = ROOT_PATH + '/data_/clusters/chunk*.tsv.gz'
-MGNIFAM_PATH = ROOT_PATH + '/data_/mgnify/chunk*.fa.gz'
-UNIPROT_PATH = ROOT_PATH + '/data_/uniprot/chunk*.fa.gz'
+LINCLUST_PATH = ROOT_PATH + '/data/clusters/chunk*.tsv.gz'
+MGNIFAM_PATH = ROOT_PATH + '/data/mgnify/chunk*.fa.gz'
+UNIPROT_PATH = ROOT_PATH + '/data/uniprot/chunk*.fa.gz'
 
 # Main
 if __name__ == '__main__':

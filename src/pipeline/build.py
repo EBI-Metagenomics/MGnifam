@@ -1656,7 +1656,7 @@ class Build(Pipeline):
         # Store fasta sequences file
         with open(os.path.join(clusters_path, 'fasta_sequences.json'), 'w') as f:
             # Write to file
-            f.write(json.dump(fasta_sequences, f, indent=2))
+            json.dump(fasta_sequences, f, indent=2)
 
         # Align cluster sequences to HMM using hmmalign
         self.make_hmm_alignments(
