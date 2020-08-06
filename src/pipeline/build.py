@@ -311,14 +311,14 @@ class Build(Pipeline):
             verbose=verbose
         )
 
-        # # Run search against MGnifam sub-pipeline
-        # self.search_hmm_mgnifam(
-        #     clusters_path=clusters_path,
-        #     mgnifam_shape=mgnifam_shape,
-        #     min_jobs=min_jobs,
-        #     max_jobs=max_jobs,
-        #     verbose=verbose
-        # )
+        # Run search against MGnifam sub-pipeline
+        self.search_hmm_mgnifam(
+            clusters_path=clusters_path,
+            mgnifam_shape=mgnifam_shape,
+            min_jobs=min_jobs,
+            max_jobs=max_jobs,
+            verbose=verbose
+        )
 
         # Update timers
         time_end = time()
@@ -1660,13 +1660,13 @@ class Build(Pipeline):
             # Remove tabular output file
             os.remove(temp_path)
 
-        # Keep only domain hits which have a sequence hit either
-        domain_hits = {
-            cluster_name: cluster_members
-            for cluster_name, cluster_members
-            in domain_hits.items()
-            if cluster_name in set(sequence_hits.keys())
-        }
+        # # Keep only domain hits which have a sequence hit either
+        # domain_hits = {
+        #     cluster_name: cluster_members
+        #     for cluster_name, cluster_members
+        #     in domain_hits.items()
+        #     if cluster_name in set(sequence_hits.keys())
+        # }
 
         # DEBUG Show domain hits
         for i, hit in enumerate(domain_hits):
@@ -1676,12 +1676,15 @@ class Build(Pipeline):
             if i >= 10:
                 break
 
-        # Fetch retrieved sequences from MGnifam fasta dataset
-        sequences_acc = {
-            sequence_acc
-            for cluster_name in domain_hits.keys()
-            for sequence_acc in domain_hits.get(cluster_name)
-        }
+
+        # Initialize sequences to retrieve
+        sequences_acc = set()
+        # Loop through each sequence accession in domain hits
+        for cluster_name in domain_hits.keys():
+            # Loop through each sequence accession
+            for sequence_acc in domain_hits[cluster_name]:
+                # Store sequence accession
+                sequences_acc.add(sequence_acc)
 
         # DEBUG Show sequences accession
         for i, sequence_acc in enumerate(sequences_acc):
@@ -1708,13 +1711,13 @@ class Build(Pipeline):
             # Write to file
             json.dump(fasta_sequences, f, indent=2)
 
-        # Align cluster sequences to HMM using hmmalign
-        self.make_hmm_alignments(
-            clusters_path=clusters_path,
-            fasta_sequences=fasta_sequences,
-            cluster_members=domain_hits,
-            client=client
-        )
+        # # Align cluster sequences to HMM using hmmalign
+        # self.make_hmm_alignments(
+        #     clusters_path=clusters_path,
+        #     fasta_sequences=fasta_sequences,
+        #     cluster_members=domain_hits,
+        #     client=client
+        # )
 
         # Close client
         self.close_client(cluster, client)
@@ -1853,6 +1856,7 @@ def get_cluster_names(paths, shuffle=False):
         random.shuffle(cluster_names)
     # Return cluster names list
     return cluster_names
+
 
 # Test
 if __name__ == '__main__':
