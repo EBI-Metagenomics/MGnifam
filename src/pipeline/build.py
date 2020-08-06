@@ -17,6 +17,7 @@ from time import time
 import shutil
 import random
 import math
+import json
 import os
 import re
 
@@ -1483,6 +1484,9 @@ class Build(Pipeline):
             in clusters_iter
         }
 
+        # DEBUG
+        print('Cluster names (1):', cluster_names)
+
         # # Initialize list of available HMM models
         # hmm_models = list()
         # # Initialize length of longest model
@@ -1514,6 +1518,9 @@ class Build(Pipeline):
             clusters_path=clusters_path,
             verbose=verbose
         )
+
+        # DEBUG
+        print('Cluster names (1):', cluster_names)
 
         # Get maximum number of cores
         max_cores = int(self.cluster_kwargs.get('cores', 1))
@@ -1592,11 +1599,11 @@ class Build(Pipeline):
             client=client
         )
 
-        # DEBUG
-        print('Sequnece scores:', sequence_scores)
-        print('Domain scores:', domain_scores)
-        print('Sequence hits:', sequence_hits)
-        print('Domain hits:', domain_hits)
+        # # DEBUG
+        # print('Sequnece scores:', sequence_scores)
+        # print('Domain scores:', domain_scores)
+        # print('Sequence hits:', sequence_hits)
+        # print('Domain hits:', domain_hits)
 
         # Remove temporary output files
         for temp_path in [*tblout_paths, *domtblout_paths]:
@@ -1611,21 +1618,45 @@ class Build(Pipeline):
             if cluster_name in set(sequence_hits.keys())
         }
 
+        # DEBUG Show domain hits
+        for i, hit in enumerate(domain_hits):
+            # Print current hit
+            print('{:d}-th domain hit:'.format(i+1), hit)
+            # Early stopping
+            if i >= 10:
+                break
+
         # Fetch retrieved sequences from MGnifam fasta dataset
         sequences_acc = {
             sequence_acc
-            for cluster_name in domain_hits
-            for sequence_acc in domain_hits[cluster_name]
+            for cluster_name in domain_hits.keys()
+            for sequence_acc in domain_hits.get(cluster_name)
         }
 
+        # DEBUG Show sequences accession
+        for i, sequence_acc in enumerate(sequences_acc):
+            # Print current hit
+            print('{:d}-th sequence accession:'.format(i+1), sequence_acc)
+            # Early stopping
+            if i >= 10:
+                break
+
         # Fill mgnifam dictionary
-        time_run, (fasta_sequences, _) = benchmark(
+        time_run, (fasta_sequences, num_sequences) = benchmark(
             fn=self.search_fasta_sequences,
             sequences_acc=sequences_acc,
             fasta_dataset=self.mgnifam,
             client=client,
             verbose=verbose
         )
+
+        # DEBUG
+        # Show number of sequences checked
+        print('Number of retrieved sequences:', num_sequences)
+        # Store fasta sequences file
+        with open(os.path.join(clusters_path, 'fasta_sequences.json'), 'w') as f:
+            # Write to file
+            f.write(json.dump(fasta_sequences, f, indent=2))
 
         # Align cluster sequences to HMM using hmmalign
         self.make_hmm_alignments(
