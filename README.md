@@ -204,7 +204,7 @@ environmental variables, as well as a reference to the MGnifam configuration
 file, which is used to retrieve all the settings (such as database credentials,
 paths to database, ...).
 
-Usage:
+**Usage**
 
 ```
 release100.py [-h] --in_path IN_PATH [IN_PATH ...] --out_path OUT_PATH
@@ -230,7 +230,25 @@ allocate a reasonable amount of memory to the main process and limiting the
 number of parallel computations (batch size) to a number between 10 and 100
 thousands.
 
-Usage:
+**Requirements**
+
+- python >= 3.7.x
+- dask >= 2.17.2
+- dask_jobqueue >= 0.7.1
+- numpy >= 1.18.1
+- muscle >= 3.8.31
+- mobidb_lite >= 2.0.x
+- hmmer >= 3.1b2
+  - hmmbuild
+  - hmmsearch
+  - hmmalign
+
+Note: MobiDB Lite script reequires both Python 2.x and 3.x. While pipeline
+can be run directly from Python3.x, user must provide a suitable environment to
+subprocesses (passing a properly formatted JSON file to
+`--environ_path [ENVIRON_PATH]` option).
+
+**Usage**
 
 ```
 release200.py [-h] --in_path IN_PATH [IN_PATH ...] --out_path OUT_PATH
