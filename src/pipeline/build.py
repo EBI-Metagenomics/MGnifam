@@ -1728,8 +1728,8 @@ class Build(Pipeline):
         # Define cluster name
         cluster_name = os.path.basename(cluster_path)
 
-        # Define input fasta file path
-        fasta_path = os.path.join('ALIGN.fasta')
+        # # Define input fasta file path
+        # fasta_path = os.path.join('ALIGN.fasta')
 
         # Define output alignment path (.sto stockholm)
         sto_path = os.path.join(cluster_path, 'ALIGN.sto')
