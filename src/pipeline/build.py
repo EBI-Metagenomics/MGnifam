@@ -1534,43 +1534,12 @@ class Build(Pipeline):
             in clusters_iter
         }
 
-        # DEBUG
-        print('Cluster names (1):', cluster_names)
-
-        # # Initialize list of available HMM models
-        # hmm_models = list()
-        # # Initialize length of longest model
-        # hmm_length = 0
-        # # Retrieve available HMM models
-        # for cluster_path in clusters_iter:
-        #     # Get cluster name
-        #     cluster_name = os.path.basename(cluster_path)
-        #     # Retrieve HMM path
-        #     hmm_path = os.path.join(cluster_path, 'HMM')
-        #     # Ensure file exists
-        #     if not os.path.isfile(hmm_path):
-        #         # Eventually raise new exceptio
-        #         raise FileNotFoundError(' '.join([
-        #             'Error: could not find HMM model',
-        #             'for cluster {:s}'.format(cluster_name),
-        #             'at {:s}'.format(hmm_path)
-        #         ]))
-        #     # Load HMM model
-        #     hmm_model = HMM.from_file(hmm_path)
-        #     # Update longest
-        #     hmm_length = max(hmm_length, hmm_model.length)
-        #     # Store HMM model
-        #     hmm_models.append(hmm_model)
-
         # Make HMM library
         hmmlib_path, hmmlib_len, cluster_names = self.make_hmm_library(
             cluster_names=cluster_names,
             clusters_path=clusters_path,
             verbose=verbose
         )
-
-        # DEBUG
-        print('Cluster names (1):', cluster_names)
 
         # Get maximum number of cores
         max_cores = int(self.cluster_kwargs.get('cores', 1))
@@ -1649,32 +1618,18 @@ class Build(Pipeline):
             client=client
         )
 
-        # # DEBUG
-        # print('Sequnece scores:', sequence_scores)
-        # print('Domain scores:', domain_scores)
-        # print('Sequence hits:', sequence_hits)
-        # print('Domain hits:', domain_hits)
-
         # Remove temporary output files
         for temp_path in [*tblout_paths, *domtblout_paths]:
             # Remove tabular output file
             os.remove(temp_path)
 
-        # # Keep only domain hits which have a sequence hit either
-        # domain_hits = {
-        #     cluster_name: cluster_members
-        #     for cluster_name, cluster_members
-        #     in domain_hits.items()
-        #     if cluster_name in set(sequence_hits.keys())
-        # }
-
-        # DEBUG Show domain hits
-        for i, hit in enumerate(domain_hits):
-            # Print current hit
-            print('{:d}-th domain hit:'.format(i+1), hit)
-            # Early stopping
-            if i >= 10:
-                break
+        # # DEBUG Show domain hits
+        # for i, hit in enumerate(domain_hits):
+        #     # Print current hit
+        #     print('{:d}-th domain hit:'.format(i+1), hit)
+        #     # Early stopping
+        #     if i >= 10:
+        #         break
 
 
         # Initialize sequences to retrieve
@@ -1686,13 +1641,13 @@ class Build(Pipeline):
                 # Store sequence accession
                 sequences_acc.add(sequence_acc)
 
-        # DEBUG Show sequences accession
-        for i, sequence_acc in enumerate(sequences_acc):
-            # Print current hit
-            print('{:d}-th sequence accession:'.format(i+1), sequence_acc)
-            # Early stopping
-            if i >= 10:
-                break
+        # # DEBUG Show sequences accession
+        # for i, sequence_acc in enumerate(sequences_acc):
+        #     # Print current hit
+        #     print('{:d}-th sequence accession:'.format(i+1), sequence_acc)
+        #     # Early stopping
+        #     if i >= 10:
+        #         break
 
         # Fill mgnifam dictionary
         time_run, (fasta_sequences, num_sequences) = benchmark(
@@ -1738,19 +1693,32 @@ class Build(Pipeline):
             cluster_name = os.path.basename(cluster_path)
             # Define fet of sequence accession from cluster members
             cluster_acc = cluster_members.get(cluster_name, set())
+
+            # Define path to fasta file
+            fasta_path = os.path.join(cluster_path, 'ALIGN.fa')
+            # Open file in write mode
+            with open(fasta_path, 'w') as fasta_file:
+                # Loop through every sequence in current cluster
+                for sequence_acc in cluster_members.get(cluster_name, set()):
+                    # Retrieve each fasta sequence
+                    fasta_entry = fasta_sequences.get(sequence_acc)
+                    # Write fasta sequence
+                    fasta_file.write(fasta_entry + '\n')
+
             # Make alignment
             futures.append(client.submit(
                 func=self.align_hmm_cluster,
                 cluster_path=cluster_path,
-                fasta_sequences=fasta_sequences,
-                sequences_acc=cluster_acc,
+                fasta_path=fasta_path,
+                # fasta_sequences=fasta_sequences,
+                # sequences_acc=cluster_acc,
                 hmm_align=self.hmm_align
             ))
         # Gather all futures
         client.gather(futures)
 
     @staticmethod
-    def align_hmm_cluster(cluster_path, fasta_sequences, sequences_acc, hmm_align):
+    def align_hmm_cluster(cluster_path, fasta_path, hmm_align):
         """ Align HMM to cluster sequneces
 
         Raise
@@ -1759,6 +1727,9 @@ class Build(Pipeline):
 
         # Define cluster name
         cluster_name = os.path.basename(cluster_path)
+
+        # Define input fasta file path
+        fasta_path = os.path.join('ALIGN.fasta')
 
         # Define output alignment path (.sto stockholm)
         sto_path = os.path.join(cluster_path, 'ALIGN.sto')
@@ -1776,24 +1747,24 @@ class Build(Pipeline):
                 'not found at {:s}'.format(hmm_path)
             ]))
 
-        # Define fasta path
-        fasta_path = NamedTemporaryFile(delete=False, suffix='.fa').name
-        # Fill fasta file with sequences
-        with open(fasta_path, 'w') as fasta_file:
-            # Loop through each cluster members
-            for sequence_acc in sequences_acc:
-                # Retrieve fasta entry
-                fasta_entry = fasta_sequences.get(sequence_acc)
-                # Case entry is empty
-                if not fasta_entry:
-                    # Raise exception
-                    raise KeyError(' '.join([
-                        'Error: could not retrieve fasta sequence',
-                        '{:s}'.format(sequence_acc),
-                        'for cluster {:s}'.format(cluster_name)
-                    ]))
-                # Add entry to file
-                fasta_file.write(fasta_entry + '\n')
+        # # Define fasta path
+        # fasta_path = NamedTemporaryFile(delete=False, suffix='.fa').name
+        # # Fill fasta file with sequences
+        # with open(fasta_path, 'w') as fasta_file:
+        #     # Loop through each cluster members
+        #     for sequence_acc in sequences_acc:
+        #         # Retrieve fasta entry
+        #         fasta_entry = fasta_sequences.get(sequence_acc)
+        #         # Case entry is empty
+        #         if not fasta_entry:
+        #             # Raise exception
+        #             raise KeyError(' '.join([
+        #                 'Error: could not retrieve fasta sequence',
+        #                 '{:s}'.format(sequence_acc),
+        #                 'for cluster {:s}'.format(cluster_name)
+        #             ]))
+        #         # Add entry to file
+        #         fasta_file.write(fasta_entry + '\n')
 
         # Run hmmalign script
         hmm_align.run(
@@ -1804,8 +1775,8 @@ class Build(Pipeline):
             # Set path to output alignment file
             out_path=sto_path
         )
-        # Remove temporary fasta file
-        os.remove(fasta_path)
+        # # Remove temporary fasta file
+        # os.remove(fasta_path)
 
         # # TODO Load retrieved alignment file
         # align = MSA.from_sto(sto_path)
