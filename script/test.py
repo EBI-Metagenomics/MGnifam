@@ -1,6 +1,6 @@
 # Dependencies
-from dask.distributed import Client
-from dask_jobqueue import LSFCluster
+import dask.distributed as dd
+import dask_jobqueue as dj
 from time import time, sleep
 
 # Define test function
@@ -20,13 +20,33 @@ def test(beg, end, delay=1):
     # Return list of numbers
     return numbers
 
+
+# Just a wrapper for a LSFCluster with scalable cores
+class LSFCluster(dj.LSFCluster):
+
+    # Constructor
+    def __init__(self, memory, cores, processes, walltime='00:30', **kwargs):
+        # Call parent contructort
+        super().__init__(memory=memory, cores=cores, processes=processes, walltime=walltime)
+        # Save number of cores
+        self.cores = cores
+        # DEBUG
+        print('Number of cores:', self.cores)
+        print('Job script:', self.job_script())
+
+    # Adapt: require this amount of cores per job
+    def adapt(self, minimum, maximum, cores=1):
+        raise NotImplementedError
+
+
 # Main
 if __name__ == '__main__':
 
     # Make new cluster
-    cluster = LSFCluster(walltime='01:00', memory='1GB', cores=1, processes=1)
+    # cluster = dj.LSFCluster(walltime='00:30', memory='1GB', cores=1, processes=1)
+    cluster = LSFCluster(walltime='00:30', memory='1GB', cores=2, processes=1)
     # Make new client
-    client = Client(cluster)
+    client = dd.Client(cluster)
 
     # Define interval boundaries (count to 100)
     count_beg, count_end = 0, 100
@@ -38,7 +58,7 @@ if __name__ == '__main__':
 
     # Request for 10 jobs
     # cluster.adapt(minimum=min_jobs, maximum=max_jobs)
-    cluster.adapt()
+    cluster.scale(n=10, jobs=10, memory='4GB', cores=5)
 
     # Define start time
     time_beg, time_end = time(), 0.0
@@ -51,7 +71,7 @@ if __name__ == '__main__':
         # Define batch end index
         batch_end = i + min(batch_size, count_end)
         # Make new future
-        futures.append(client.submit(test, batch_beg, batch_end, delay=1))
+        futures.append(client.submit(test, batch_beg, batch_end, delay=3))
     # Retrieve results
     results = client.gather(futures)
     # Update end time
