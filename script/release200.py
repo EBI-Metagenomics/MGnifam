@@ -3,10 +3,10 @@ from dask.distributed import LocalCluster
 from dask_jobqueue import LSFCluster
 from glob import glob
 import argparse
+import shutil
 import json
 import sys
 import os
-import re
 
 # Set path for custom dependencies
 sys.path.append(os.path.dirname(__file__) + '/..')
@@ -210,7 +210,7 @@ if __name__ == '__main__':
         os.mkdir(release_path)
 
     # Initialize build pipeline
-    pipeline = Build(
+    build = Build(
         # Pipeline parameters, required to handle job scheduling
         cluster_type=cluster_types.get(cluster_type),
         cluster_kwargs={
@@ -256,6 +256,21 @@ if __name__ == '__main__':
     # Define clusters iterator
     cluster_names = get_cluster_names(paths=input_path, shuffle=shuffle)
 
+    # Try making new build directory
+    try:
+        # Define build path
+        build_path = os.path.join(release_path, 'build')
+        # Make directory if not exists
+        os.makedirs(build_path, exist_ok=True)
+
+    # Intercept error
+    except OSError:
+        # Raise new curstom OSError
+        raise OSError(' '.join([
+            'Error: unable to make build directory',
+            'at {:s}'.format(build_path)
+            ]))
+
     # Define number of clusters
     num_clusters = len(cluster_names)
     # Define maximum number of clusters to elaborate
@@ -273,10 +288,20 @@ if __name__ == '__main__':
         # make directory for current batch
         os.makedirs(batch_path, exist_ok=True)
         # Run pipeline for current batch of cluster names
-        pipeline(
+        build(
             cluster_names=cluster_names[i:min(num_clusters, i+batch_size)],
             clusters_path=batch_path,
             min_jobs=args.min_jobs,
             max_jobs=args.max_jobs,
             verbose=bool(args.verbose)
         )
+
+        # Loop through earch kept cluster
+        for cluster_path in glob(batch_path, 'MGYP*'):
+            # Define cluster name
+            cluster_name = os.path.basename(cluster_path)
+            # Move cluster to build directory
+            shutil.copytree(
+                src=cluster_path,
+                dst=os.path.join(build_path, cluster_name)
+            )

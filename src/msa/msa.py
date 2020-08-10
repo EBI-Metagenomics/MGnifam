@@ -3,12 +3,11 @@ Handle multiple sequence alignments
 """
 
 # Dependencies
-import matplotlib.colors as colors
+from glob import glob
 import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
 import tempfile
-import sys
 import os
 import re
 
@@ -26,7 +25,7 @@ class MSA(object):
         'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y'
     ])
     # Gap character
-    gap = '-'
+    gap = '-.'
 
     # Constructor
     def __init__(self):
@@ -53,8 +52,8 @@ class MSA(object):
         # Check if there is at least 1 position remaining
         if (i < j):
             # Update begin and end positions
-            msa.beg += self.beg + np.sum(self.aln[:, :i] != self.gap, axis=1)
-            msa.end += self.end - np.sum(self.aln[:, j:] != self.gap, axis=1)
+            msa.beg += self.beg + np.sum(np.isin(self.aln[:, :i], self.gap, invert=True), axis=1)
+            msa.end += self.end - np.sum(np.isin(self.aln[:, j:], self.gap, invert=True), axis=1)
         # Return trimmed alignment
         return msa
 
@@ -124,10 +123,10 @@ class MSA(object):
                     entries[acc] = {'acc':acc, 'beg': beg, 'end': end, 'res':list()}
                     # Remove header from line
                     line = re.sub(r'^[a-zA-Z0-9]+/[\d]+-[\d]+[ ]*', '', line)
-                # Change dots to minus characters
-                line = re.sub(r'[\.\-]', '-', line)
+                # # Change dots to minus characters
+                # line = re.sub(r'[\.\-]', '-', line)
                 # Retrieve residues: remove all non-letter characters
-                res = list(re.sub(r'[^\-a-zA-Z]+', '', line))
+                res = list(re.sub(r'[^\-\.a-zA-Z]+', '', line))
                 # Append residues to last entry
                 entries[acc]['res'] += res
                 # print(entries[acc])
@@ -210,7 +209,7 @@ class MSA(object):
         msa.aln = np.array(aln)
         msa.acc = np.array(acc)
         # Compute number of non-gap reisudes for each aligned sequence
-        not_gap = (msa.aln != cls.gap).sum(axis=1)
+        not_gap = np.isin(msa.aln, cls.gap, invert=True).sum(axis=1)
         # Define begin position of each aligned sequence
         msa.beg = (not_gap > 0).astype(np.int)
         # Define end position of each aligned sequence
@@ -238,23 +237,43 @@ class MSA(object):
         # Initialize offset list
         beg, end = list(), list()
 
+        # Initialize an intermediate dictionary
+        sequences_dict = dict()
         # Loop through stockholm file lines
         for line in in_file:
             # Define expected line format to match
-            match = re.search(r'^([^#]\S*)/(\d+)-(\d+)\s+(\S+)', line)
+            match = re.search(r'^([^#]\S*)\s+(\S+)', line)
             # Case current line does not match expected format
             if not match:
                 # Go to next iteration
                 continue
-            # Save accession number
-            acc.append(str(match.group(1)))
-            # Save offset
-            beg.append(int(match.group(2)))
-            end.append(int(match.group(3)))
-            # Save residues
-            aln.append(list(match.group(4)))
+            # Get raw accession
+            accession = match.group(1)
+            # Get residues list
+            residues = list(match.group(2))
+            # Initialize entry
+            sequences_dict.setdefault(accession, residues)
+            # Update entry
+            sequences_dict[accession] += list(residues)
 
-        # Update
+        # Update list of sequences
+        for accession, residues in sequences_dict.items():
+            # Split accession in accession number and residues boundaries
+            found = re.search(r'(\S+)/(\d+)-(\d+)', accession)
+            # Retrieve accession number and residues boundaries
+            acc.append(found.group(1))
+            beg.append(int(found.group(2)))
+            end.append(int(found.group(3)))
+            # Save residues
+            aln.append(residues)
+
+        # Update output MSA
+        msa.aln = np.array(aln)
+        msa.acc = np.array(acc)
+        msa.beg = np.array(beg, dtype=np.int)
+        msa.end = np.array(end, dtype=np.int)
+        # Return Multiple Sequence Alignment class
+        return msa
 
     # Plot alignment matrix as heatmap
     def plot_heatmap(self, ax, score='gap', cmap=None):
@@ -265,7 +284,7 @@ class MSA(object):
         # Case scoring is according to gaps
         if score == 'gap':  # Default: search for gaps
             # Make new alignment matrix
-            aln = (aln != self.gap)
+            aln = np.isin(aln, self.gap, invert=True)
             # Set default color map
             cmap = 'binary_r' if cmap is None else cmap
         # Otherwise
@@ -295,7 +314,7 @@ class MSA(object):
         # Add colorbar
         _ = plt.gcf().colorbar(im, ax=ax)
         # Make a mask for gaps
-        gaps = (self.aln == self.gap)
+        gaps = np.isin(self.aln, self.gap)
         # Add alpha:
         _ = ax.imshow(
             # Set balck only gap positions
@@ -374,7 +393,7 @@ class MSA(object):
         # Loop through each possible residues
         for z in range(k):
             # Set 1 if values match current residue letter
-            encoded[:, :, z] = (x == res[z])
+            encoded[:, :, z] = np.isin(x, res[z])
         # Return encoded matrix as integer matrix
         return encoded.astype(np.int)
 
@@ -553,10 +572,22 @@ class Muscle(object):
 # Unit testing
 if __name__ == '__main__':
 
+    # Define root path
+    ROOT_PATH = os.path.dirname(__file__) + '/../..'
+    # Define examples path
+    EXAMPLES_PATH = ROOT_PATH + '/tmp/examples/MGYP*'
+
+    # Load all examples paths
+    examples_path = glob(EXAMPLES_PATH)
+
+    # Define alignment path
+    aln_path = os.path.join(examples_path[0], 'SEED')
     # Read multiple sequence alignment
-    msa = MSA.from_aln('tmp/examples/MGYP000050665084/SEED')
+    msa = MSA.from_aln(aln_path)
     # Check number of aligned sequences
-    print('There are %d aligned sequences with %d columns' % msa.aln.shape)
+    print('There are {:d} aligned sequences'.format(msa.aln.shape[0]), end=' ')
+    print('with {:d} columns'.format(msa.aln.shape[1]), end=' ')
+    print('in alignment {:s}'.format(aln_path))
     # Check first 5 rows
     for i in range(0, min(5, msa.aln.shape[0])):
         # Print sequence description
@@ -566,6 +597,26 @@ if __name__ == '__main__':
         # Print actual sequence
         print(''.join(msa.aln[i, :]))
         print()
+
+    # Define alignment path
+    sto_path = os.path.join(examples_path[0], 'ALIGN.sto')
+    # Open alignment file
+    with open(sto_path, 'r') as sto_file:
+        # Read multiple sequence alignment from stockholm
+        msa = MSA.from_sto(sto_file)
+        # Check number of aligned sequences
+        print('There are {:d} aligned sequences'.format(msa.aln.shape[0]), end=' ')
+        print('with {:d} columns'.format(msa.aln.shape[1]), end=' ')
+        print('in alignment {:s}'.format(sto_path))
+        # Check first 5 rows
+        for i in range(0, min(5, msa.aln.shape[0])):
+            # Print sequence description
+            print('Sequence nr %d: %s from %d to %d' % (
+                i+1, msa.acc[i], msa.beg[i], msa.end[i]
+            ))
+            # Print actual sequence
+            print(''.join(msa.aln[i, :]))
+            print()
 
     # # Test one hot encoder
     # ohe = MSA.one_hot_encode(msa.aln, include_gap=True)
@@ -624,6 +675,8 @@ if __name__ == '__main__':
     # print('Input alignment has shape {}'.format(msa.aln.shape))
     # print('Redundacny matrix has shape {}'.format(redundancy.shape))
     # print(redundancy)
+
+    #
 
     # Plot alignment as heatmap
     fig, ax = plt.subplots(1, 1, figsize=(30, 15))

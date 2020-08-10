@@ -9,15 +9,15 @@ from src.hmm.hmm import HMM
 from src.dataset import LinClust
 from src.dataset import Fasta
 from src.disorder import MobiDbLite
+from src.mgnifam import Cluster
 from src.utils import benchmark, is_gzip, gunzip, as_bytes
 from subprocess import CalledProcessError
 from tempfile import NamedTemporaryFile
-from glob import iglob, glob
+from glob import glob
 from time import time
 import shutil
 import random
 import math
-import json
 import os
 import re
 
@@ -105,7 +105,7 @@ class Build(Pipeline):
         self.env = env
 
     # Run the pipeline
-    def run(self, cluster_names, clusters_path, min_jobs=1, max_jobs=100, verbose=False):
+    def run(self, cluster_names, clusters_path, author_name='', min_jobs=1, max_jobs=100, verbose=False):
         """ Run BATCH pipeline
 
         Args
@@ -1505,7 +1505,7 @@ class Build(Pipeline):
         self.close_client(cluster, client)
 
     # Search multiple HMM against MGnifam
-    def search_hmm_mgnifam(self, clusters_path, mgnifam_shape, min_jobs=1, max_jobs=100, verbose=False):
+    def search_hmm_mgnifam(self, clusters_path, mgnifam_shape, author_name, min_jobs=1, max_jobs=100, verbose=False):
         """ Serach multiple HMM models against MGnifam
 
         First, take all HMM available from clusters directory: if one cluster
@@ -1631,7 +1631,6 @@ class Build(Pipeline):
         #     if i >= 10:
         #         break
 
-
         # Initialize sequences to retrieve
         sequences_acc = set()
         # Loop through each sequence accession in domain hits
@@ -1674,6 +1673,14 @@ class Build(Pipeline):
             client=client
         )
 
+        # Make description files
+        self.make_desc_files(
+            clusters_path=clusters_path,
+            sequence_scores=sequence_scores,
+            domain_scores=domain_scores,
+
+        )
+
         # Close client
         self.close_client(cluster, client)
 
@@ -1691,8 +1698,8 @@ class Build(Pipeline):
         for cluster_path in glob(os.path.join(clusters_path, 'MGYP*')):
             # Define cluster name
             cluster_name = os.path.basename(cluster_path)
-            # Define fet of sequence accession from cluster members
-            cluster_acc = cluster_members.get(cluster_name, set())
+            # # Define fet of sequence accession from cluster members
+            # cluster_acc = cluster_members.get(cluster_name, set())
 
             # Define path to fasta file
             fasta_path = os.path.join(cluster_path, 'ALIGN.fa')
@@ -1710,8 +1717,6 @@ class Build(Pipeline):
                 func=self.align_hmm_cluster,
                 cluster_path=cluster_path,
                 fasta_path=fasta_path,
-                # fasta_sequences=fasta_sequences,
-                # sequences_acc=cluster_acc,
                 hmm_align=self.hmm_align
             ))
         # Gather all futures
@@ -1727,9 +1732,6 @@ class Build(Pipeline):
 
         # Define cluster name
         cluster_name = os.path.basename(cluster_path)
-
-        # # Define input fasta file path
-        # fasta_path = os.path.join('ALIGN.fasta')
 
         # Define output alignment path (.sto stockholm)
         sto_path = os.path.join(cluster_path, 'ALIGN.sto')
@@ -1747,25 +1749,6 @@ class Build(Pipeline):
                 'not found at {:s}'.format(hmm_path)
             ]))
 
-        # # Define fasta path
-        # fasta_path = NamedTemporaryFile(delete=False, suffix='.fa').name
-        # # Fill fasta file with sequences
-        # with open(fasta_path, 'w') as fasta_file:
-        #     # Loop through each cluster members
-        #     for sequence_acc in sequences_acc:
-        #         # Retrieve fasta entry
-        #         fasta_entry = fasta_sequences.get(sequence_acc)
-        #         # Case entry is empty
-        #         if not fasta_entry:
-        #             # Raise exception
-        #             raise KeyError(' '.join([
-        #                 'Error: could not retrieve fasta sequence',
-        #                 '{:s}'.format(sequence_acc),
-        #                 'for cluster {:s}'.format(cluster_name)
-        #             ]))
-        #         # Add entry to file
-        #         fasta_file.write(fasta_entry + '\n')
-
         # Run hmmalign script
         hmm_align.run(
             # Set path to input HMM model
@@ -1782,6 +1765,30 @@ class Build(Pipeline):
         # align = MSA.from_sto(sto_path)
         # # TODO Parse loaded alignment file
         # align.to_aln(aln_path)
+
+    # Make DESC files
+    def make_desc_files(self, clusters_path, sequence_scores, domain_scores, author_name, verbose=False):
+        # Loop through each cluster path
+        for cluster_path in glob(clusters_path, 'MGYP*'):
+            # Get cluster name
+            cluster_name = os.path.basename(cluster_path)
+            # Make new mgnifam cluster DESC file
+            mgnifam_cluster = Cluster(
+                name=cluster_name,
+                path=cluster_path,
+                desc='Protein of unknown function (MGDUF)',
+                auth=author_name,
+                seq_scores=sequence_scores.get(cluster_name),
+                dom_scores=domain_scores.get(cluster_name),
+                type='Family'
+            )
+            # Store to file
+            mgnifam_cluster.to_desc()
+
+            if verbose:
+                print('DESC file made for', end=' ')
+                print('cluster {:s}'.format(cluster_name), end=' ')
+                print('at {:s}'.format(cluster_path))
 
 
 # Utility: retrieve cluster names from TSV files
