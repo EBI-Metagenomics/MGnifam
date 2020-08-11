@@ -46,6 +46,25 @@ class HMM(object):
         return is_alphabet.group(1)
 
     @classmethod
+    def from_string(cls, string):
+        # Define new dict containing default HMM parameters
+        params = {'name': '', 'length': 0, 'alphabet': 'amino', 'path': ''}
+        # Loop through each line in file
+        for line in re.split(r'[\n\r]+', string):
+            # Get name
+            name = cls.get_name(line)
+            # Get length
+            length = cls.get_length(line)
+            # Get alphabet
+            alpha = cls.get_alphabet(line)
+            # Update params fields
+            params['name'] = params['name'] if name is None else name
+            params['length'] = params['length'] if length is None else length
+            params['alphabet'] = params['alphabet'] if alpha is None else alpha
+        # Return new HMM instance with retrieved params
+        return cls(**params)
+
+    @classmethod
     def from_file(cls, path):
         # Define new dict containing default HMM parameters
         params = {'name': '', 'length': 0, 'alphabet': 'amino'}
