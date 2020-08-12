@@ -41,7 +41,8 @@ class Load(object):
         # Connect to database
         self.mgnifam_db.connect()
 
-        # TODO Initialize transaction (locks database for a while)
+        # Initialize transaction
+        self.mgnifam_db.autocommit = False
 
         # Get all HMM accession from MGnifam
         mgnifam_acc = self.mgnifam_db.get_accessions()
