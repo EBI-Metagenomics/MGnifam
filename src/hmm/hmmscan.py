@@ -14,7 +14,7 @@ class HMMScan(HMMER):
 
     # Run script
     def run(
-        self, hmmdb_path='', fasta_path='',
+        self, hmm_path='', fasta_path='',
         out_path='', tblout_path='', domtblout_path='', pfamtblout_path='',
         use_accession=False, no_alignment=False, text_width=0,
         sequence_eval=(None, None), sequence_bits=(None, None),
@@ -25,7 +25,7 @@ class HMMScan(HMMER):
         """ Run hmmsearch
 
         Args
-        hmmdb_path (str)        Path to HMM database path (comes from hmmpress)
+        hmm_path (str)        Path to HMM database path (comes from hmmpress)
         fasta_path (str)        Path to fasta sequences file
         out_path (str)          Path to output file, avoid stdout
         tblout_path (str)       Path to tblout file
@@ -98,7 +98,7 @@ class HMMScan(HMMER):
         # Set number of CPUs (threads)
         cmd += ['--cpu', num_cpus] if num_cpus else []
         # Add mandatory parameters: HMM database and FASTA file
-        cmd += [hmmdb_path, fasta_path]
+        cmd += [hmm_path, fasta_path]
         # Ensure that each parameter is string
         cmd = [str(cmd[i]) for i in range(len(cmd))]
 
@@ -124,7 +124,7 @@ if __name__ == '__main__':
     )
     # Define path to input HMM database (directory)
     parser.add_argument(
-        '--hmmdb_path', type=str, required=True,
+        '--hmm_path', type=str, required=True,
         help='Path to HMM database directory (requires hmmpress)'
     )
     # Define path to input FASTA file
@@ -247,7 +247,7 @@ if __name__ == '__main__':
         hmmscan = HMMScan(cmd=args.cmd, env=os.environ)
         # Run HMMScan instance with given arguments
         ran = hmmscan(
-            hmmdb_path=args.hmmdb_path,
+            hmm_path=args.hmm_path,
             fasta_path=args.fasta_path,
             out_path=args.out_path,
             tblout_path=args.tblout_path,

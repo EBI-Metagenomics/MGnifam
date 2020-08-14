@@ -1,5 +1,7 @@
 # Dependencies
 from src.hmm.hmm import HMM
+from src.msa.msa import MSA
+from time import time
 import mysql.connector as dbms
 import json
 import os
@@ -98,52 +100,77 @@ class MGnifam(Database):
         # Return clusters accession numbers
         return clusters_acc
 
-    # # Get next available MGDUF id
-    # def get_next_mgduf(self):
-    #     """ Retrieve next available MGDUF id
-    #
-    #     Loop through each entry in active and dead families (concatenated):
-    #     find biggest number and increase it by 1.
-    #
-    #     Note that MGDUF ids are formatted as `^MGDUF(\d+)$`
-    #
-    #     Return
-    #     (str)       Next available MGDUF id
-    #     """
-    #     # Define "alive" MGnifam entries cursor
-    #     alive_cursor = self.get_cursor()
-    #     # Search for MGnifam ids
-    #     alive_cursor.execute('SELECT mgnifam_id FROM mgnifam')
-    #
-    #     # Define "dead" MGnifam entries cursor
-    #     dead_cursor = self.get_cursor()
-    #     # Search for dead MGnifam ids
-    #     dead_cursor.execute('SELECT mgnifam_id FROM dead_mgnifam')
-    #
-    #     # Initialize maximum MGDUF id
-    #     mgduf_max = -1
-    #     # Define list of all results cursors
-    #     cursor_list = [alive_cursor, dead_cursor]
-    #     # Loop through each query result
-    #     for cursor in cursor_list:
-    #         # Loop through each retrieved row
-    #         for row in cursor:
-    #             # Retrieve current MGDUF
-    #             mgduf_str = row[0]
-    #             # Check if current MGDUF matches expected format
-    #             match = re.search(r'^MGDUF(\d+)$', mgduf_str)
-    #             # Case retrieved string does not match expected format
-    #             if not match:
-    #                 continue  # Skip to next row
-    #             # Retrieve MGDUF number from string
-    #             mgduf_num = int(match.group(1))
-    #             # Case current MGDUF number is greater than current maximum
-    #             if mgduf_num > mgduf_max:
-    #                 # Update current maximum MGDUF number
-    #                 mgduf_max = mgduf_num
-    #
-    #     # Return maximum MGDUF number + 1
-    #     return 'MGDUF{:d}'.format(mgduf_max + 1)
+    # Get next available MGDUF id
+    def get_next_id(self):
+        """ Retrieve next available MGDUF id
+
+        Return
+        (str)       Next available MGDUF id
+        """
+        # Make "alive" MGnifam entries cursor
+        alive_cursor = self.query('SELECT mgnifam_id FROM mgnifam')
+        # Make "dead" MGnifam entries cursor
+        dead_cursor = self.query('SELECT mgnifam_id FROM dead_mgnifam')
+        # Initialize maximum MGDUF id
+        mgduf_num, mgduf_max = 0, 0
+        # Define list of all results cursors
+        cursor_list = [alive_cursor, dead_cursor]
+        # Loop through each query result
+        for cursor in cursor_list:
+            # Loop through each retrieved row
+            for row in cursor:
+                # Retrieve current MGDUF
+                mgduf_str = row[0]
+                # Check if current MGDUF matches expected format
+                match = re.search(r'^MGDUF(\d+)$', mgduf_str)
+                # Case retrieved string does not match expected format
+                if not match:
+                    continue  # Skip to next row
+                # Retrieve MGDUF number from string
+                mgduf_num = int(match.group(1))
+                # Case current MGDUF number is greater than current maximum
+                if mgduf_num > mgduf_max:
+                    # Update current maximum MGDUF number
+                    mgduf_max = mgduf_num
+
+        # Return maximum MGDUF number + 1
+        return 'MGDUF{:04d}'.format(mgduf_max + 1)
+
+    # Get next available MGYF accesion
+    def get_next_accession(self):
+        """ Retrieve next available MGYF accession
+
+        Return
+        (str)       Next available MGYF accession
+        """
+        # Make "alive" MGnifam entries cursor
+        alive_cursor = self.query('SELECT mgnifam_acc FROM mgnifam')
+        # Make "dead" MGnifam entries cursor
+        dead_cursor = self.query('SELECT mgnifam_acc FROM dead_mgnifam')
+        # Initialize maximum MGDUF id
+        mgyf_num, mgyf_max = 0, 0
+        # Define list of all results cursors
+        cursor_list = [alive_cursor, dead_cursor]
+        # Loop through each query result
+        for cursor in cursor_list:
+            # Loop through each retrieved row
+            for row in cursor:
+                # Retrieve current MGDUF
+                mgyf_str = row[0]
+                # Check if current MGDUF matches expected format
+                match = re.search(r'^MGYF(\d+)$', mgyf_str)
+                # Case retrieved string does not match expected format
+                if not match:
+                    continue  # Skip to next row
+                # Retrieve MGDUF number from string
+                mgyf_num = int(match.group(1))
+                # Case current MGDUF number is greater than current maximum
+                if mgyf_num > mgyf_max:
+                    # Update current maximum MGYF number
+                    mgyf_max = mgyf_num
+
+        # Return maximum MGDUF number + 1
+        return 'MGYF{:05d}'.format(mgyf_max + 1)
 
     # Make MGnifam HMM library
     def make_hmmlib(self, accessions, path):
@@ -228,6 +255,145 @@ class MGnifam(Database):
         # Return HMM instance
         return hmm
 
+    # Load MGnifam cluster into database
+    def load_cluster(self, cluster):
+        """ Load cluster into MGnifam database
+
+        First, generates cluster accession and cluster id if those have not been
+        previously set, by retrieving them sa previously available ones.
+        Then, reads HMM model, SEED and ALIGN alignmentsand retrieves some
+        of their characteristics.
+        Finally, adds a new entry in `mgnifam` table.
+
+        Args
+        cluster (mgnifam.Cluster)       Cluster containing all attributes
+
+        Return
+        (mgnifam.Cluster)               Same input cluster, eventually updated
+        """
+        # Case cluster ACC is not set: retrieve next one
+        if not cluster.acc:
+            # Retrieve next available accession
+            cluster.acc = self.get_next_accession()
+
+        # Case cluster ID is not set: retrieve next one
+        if not cluster.id:
+            # Retrieve next available id
+            cluster.id = self.get_next_id()
+
+        # TODO Check if given id is already taken
+
+        # TODO Check if given accession is already taken
+
+        # Check that HMM model file exists
+        if not os.path.isfile(cluster.get_path('HMM')):
+            # Raise new exception
+            raise FileNotFoundError(' '.join([
+                'Error: unable to find HMM model',
+                'for cluster {:s}'.format(cluster.name),
+                'at {:s}'.format(cluster.path)
+            ]))
+        # Load HMM model
+        hmm = HMM.from_file(cluster.get_path('HMM'))
+
+        # check that SEED file exists
+        if not os.path.isfile(cluster.get_path('SEED')):
+            # Raise new exception
+            raise FileNotFoundError(' '.join([
+                'Error: unable to find SEED alignment',
+                'for cluster {:s}'.format(cluster.name),
+                'at {:s}'.format(cluster.path)
+            ]))
+        # Load SEED alignment
+        seed = MSA.from_aln(cluster.get_path('SEED'))
+
+        # Check that ALIGN file exists
+        if not os.path.isfile(cluster.get_path('ALIGN')):
+            # Raise new exception
+            raise FileNotFoundError(' '.join([
+                'Error: unable to find ALIGN alignment',
+                'for cluster {:s}'.format(cluster.name),
+                'at {:s}'.format(cluster.path)
+            ]))
+        # Load ALIGN alignment
+        align = MSA.from_aln(cluster.get_path('ALIGN'))
+
+        # Set standard description
+        cluster.desc = 'Protein of unknown function ({:s})'.format(cluster.id)
+
+        # Define update an creation times
+        created = updated = time()
+
+        # Make a query to insert cluster values
+        self.query("""
+        INSERT INTO mgnifam (
+            mgnifam_acc, mgnifam_id, description,
+            author, seed_source, type,
+            sequence_GA, domain_GA,
+            sequence_TC, domain_TC,
+            sequence_NC, domain_NC,
+            model_length, num_seed, num_full,
+            updated, created
+        )
+        VALUES (
+            '{mgnifam_acc:s}', '{mgnifam_id:str}', '{mgnifam_de:s}',
+            '{mgnifam_au:s}', '{mgnifam_se:s}', '{mgnifam_tp:s}',
+            {sequence_ga:.02f}, {domain_ga:.02f},
+            {sequence_tc:.02f}, {domain_tc:.02f},
+            {sequence_nc:.02f}, {domain_nc:.02f},
+            {hmm_len:d}, {seed_len:d}, {align_len:d},
+            {updated:d}, {created:d}
+        );
+        """.format(
+            mgnifam_acc=cluster.acc, mgnifam_id=cluster.id,
+            mgnifam_de=cluster.desc, mgnifam_tp=cluster.type,
+            sequence_ga=cluster.seq_scores[2], domain_ga=cluster.dom_scores[2],
+            sequence_tc=cluster.seq_scores[0], domain_tc=cluster.dom_scores[0],
+            sequence_nc=cluster.seq_scores[1], domain_nc=cluster.dom_scores[1],
+            hmm_len=hmm.length, seed_len=seed.aln.shape[0], align_len=align.aln.shape[0],
+            updated=updated, created=created
+        ))
+
+        # Return updated cluster
+        return cluster
+
+    # Load HMM into database
+    def load_hmm(self, accession, path):
+        # Initialize model string
+        model = ''
+        # Open HMM model file
+        with open(path, 'r') as file:
+            # Read and save HMM model file content
+            model = file.read()
+
+        # Make query
+        self.query("""
+            INSERT INTO mgnifam_hmm(mgnifam_acc, hmm)
+            VALUES ('{acc:s}', '{hmm:s}')
+        """.format(
+            acc=accession, hmm=model
+        ))
+
+    # Load SEED alignment
+    def load_seed_alignment(self, accession, path):
+
+        # Initialize SEED alignment string
+        seed = ''
+        # Open SEED alignment file
+        with open(path, 'r') as file:
+            # Read and save SEED file content
+            seed = file.read()
+
+        # Define query string
+        query = """
+            INSERT INTO mgnifam_seed (mgnifam_acc, seed)
+            VALUES ('{acc:s}', '{aln:s}')
+        """
+        # Format query string
+        query = query.format(acc=accession, aln=seed)
+        # Make query
+        self.query(query)
+
 
 class Pfam(Database):
 
@@ -292,7 +458,6 @@ if __name__ == '__main__':
     | mgnifam_acc | varchar(9) | NO   | MUL | NULL    |       |
     | hmm         | mediumblob | YES  |     | NULL    |       |
     +-------------+------------+------+-----+---------+-------+
-    2 rows in set (0.00 sec)
     """
 
     # Define ROOT path

@@ -1,29 +1,202 @@
+# Dependencies
+from dask.distributed import Client, LocalCluster
+from distributed.utils import parse_bytes
+from dask_jobqueue import LSFCluster
+from time import time, sleep
+
+# Distributed/local jobs handler
 class Scheduler(object):
 
-    # Constructor
-    def __init__(self, cluster_type, **kwargs):
-        # Save cluster type
-        self.cluster_type = cluster_type
-        # Save cluster kwargs
-        self.cluster_kwargs = kwargs
-        # Define inner cluster
-        self.cluster = self.cluster_type(**self.cluster_kwargs)
-        # Define inner CLient
-        self.client = Client(self.cluster)
+    # Abstract constructor
+    def __init__(self, min_cores=1, max_cores=1, min_memory='1 GB', max_memory='1 GB'):
+        # Store bounaries
+        self.min_cores = min_cores
+        self.max_cores = max_cores
+        self.min_memory = min_memory
+        self.max_memory = max_memory
+        # Initialize both client and cluster
+        self._client = None
+        self._cluster = None
 
-    # Stop connection to cluster
+    @property
+    def cluster(self):
+        return self._cluster
+
+    @property
+    def client(self):
+        return self._client
+
+    @property
+    def max_cores(self):
+        return self._max_cores
+
+    @max_cores.setter
+    def max_cores(self, max_cores):
+        self._max_cores = max_cores
+
+    @property
+    def min_cores(self):
+        return self._min_cores
+
+    @min_cores.setter
+    def min_cores(self, min_cores):
+        self._min_cores = min_cores
+
+    @property
+    def max_memory(self):
+        return self._max_memory
+
+    @max_memory.setter
+    def max_memory(self, max_memory):
+        self._max_memory = max_memory
+
+    @property
+    def min_memory(self):
+        return self._min_memory
+
+    @min_memory.setter
+    def min_memory(self, min_memory):
+        self._min_memory = min_memory
+
+    # Require n jobs with given cores and memory characteristics
+    def adapt(self, minimum, maximum, cores=1, memory='1 GB', **kwargs):
+
+        # Check if given memory is greater than maximum allowed
+        if parse_bytes(memory) > parse_bytes(self.max_memory):
+            raise MemoryError(' '.join([
+                'could not allocate {:s} of memory,'.format(memory),
+                'maximum allowed is {:s}'.format(self.max_memory)
+            ]))
+
+        # Check if given memory is lower than minimum allowed
+        if parse_bytes(memory) < parse_bytes(self.min_memory):
+            raise MemoryError(' '.join([
+                'could not allocate {:s} of memory,'.format(memory),
+                'minimum allowed is {:s}'.format(self.min_memory)
+            ]))
+
+        # Check if number of cores is greater than maximum allowed
+        if cores > self.max_cores:
+            raise Exception(' '.join([
+                'could not allocate {:d} cores,'.format(cores),
+                'maximum allowed is {:d}'.format(self.max_cores)
+            ]))
+
+        # Check if number of cores is lower than minimum allowed
+        if cores < self.min_cores:
+            raise Exception(' '.join([
+                'could not allocate {:d} cores,'.format(cores),
+                'minimum allowed is {:d}'.format(self.min_cores)
+            ]))
+
+    # Close either cluster and client
     def close(self):
-        # Close inner cluster
-        self.cluster.close()
-        # Close inner client
+        # Stop client
         self.client.close()
+        # Stop cluster
+        self.cluster.close()
+        # Remove both cluster and client
+        self._cluster, self._client = None, None
 
-    # Open
-    def __enter__(self, **kwargs):
-        # Just return self
-        return self
 
-    # Close
-    def __exit__(self):
-        # Just call close method
-        self.close()
+# LSF distributed jobs handler
+class LSFScheduler(Scheduler):
+
+    # Constructor
+    def __init__(self, min_cores=1, max_cores=1, min_memory='1 GB', max_memory='1 GB', processes=1, walltime='02:00', **kwargs):
+        # Call parent constructor
+        super().__init__(min_cores=min_cores, max_cores=max_cores, min_memory=min_memory, max_memory=max_memory)
+        # Define cluster default parameters
+        self.cluster_kwargs = {**{
+            'memory': min_memory,
+            'cores': min_cores,
+            'processes': processes,
+            'walltime': walltime
+        }, **kwargs}
+
+    # Define adapt method
+    def adapt(self, minimum, maximum, cores=1, memory='1 GB', **kwargs):
+        # Call parent adapt method (check values)
+        super().adapt(minimum, maximum, cores=cores, memory=memory, **kwargs)
+        # Merge kwargs with default kwargs
+        kwargs = {**self.cluster_kwargs, **kwargs, **{
+            'cores': cores,
+            'memory': memory
+        }}
+        # Make new cluster
+        self._cluster = LSFCluster(**kwargs)
+        # Make client
+        self._client = Client(self._cluster)
+        # Adapt cluster
+        self._cluster.adapt(minimum=minimum, maximum=maximum)
+        # Return client reference
+        return self.client
+
+
+# Local jobs handler
+class LocalScheduler(Scheduler):
+
+    # Constructor
+    def __init__(self, min_cores=1, max_cores=1, min_memory='1 GB', max_memory='1 GB', processes=1, **kwargs):
+        # Call parent constructor
+        super().__init__(min_cores=min_cores, max_cores=max_cores, min_memory=min_memory, max_memory=max_memory)
+        # Define cluster default parameters
+        self.cluster_kwargs = {**{
+            'threads_per_worker': min_cores,
+            'processes': processes
+        }, **kwargs}
+
+    def adapt(self, minimum, maximum, cores=1, memory='1 GB', **kwargs):
+        # Call parent adapt method (check values)
+        super().adapt(minimum, maximum, cores=cores, memory=memory, **kwargs)
+        # Merge kwargs with default kwargs
+        kwargs = {**self.cluster_kwargs, **kwargs, **{
+            'threads_per_worker': cores
+        }}
+        # Make new cluster
+        self._cluster = LocalCluster(**kwargs)
+        # Make client
+        self._client = Client(self._cluster)
+        # Adapt cluster
+        self._cluster.adapt(minimum=minimum, maximum=maximum)
+        # Return client reference
+        return self.client
+
+
+# Unit testing
+if __name__ == '__main__':
+
+    # Define test function
+    def count_to_100(delay=1):
+        # Verbose
+        print('This is a test function: ', end=' ')
+        print('it counts from 0 to 100', end=' ')
+        print('with a delay of {:d} seconds')
+        # Loop through every integer between begin and end
+        for i in range(100):
+            # Wait for given delay
+            sleep(delay)
+
+    # Define scheduler
+    # scheduler = LSFScheduler(min_cores=1, max_cores=3, min_memory='1 GB', max_memory='3GB')
+    scheduler = LocalScheduler(min_cores=1, max_cores=3, min_memory='1 GB', max_memory='3GB')
+
+    # Initialize timers
+    time_beg, time_end = time(), 0.0
+    # Adapt
+    with scheduler.adapt(0, 5, cores=2, memory='2 GB') as client:
+        # Define futures
+        futures = list()
+        # Do five (5) loops
+        for i in range(10):
+            # Count to 100
+            future = client.submit(count_to_100, delay=1)
+            # Store future
+            futures.append(future)
+
+        # Gather results
+        client.gather(futures)
+        # Update timers
+        time_end = time()
+        # Verbose
+        print('It took {:.0f} seconds to count to 100 ten times'.format(time_end - time_beg))
