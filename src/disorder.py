@@ -1,5 +1,5 @@
 # Dependencies
-from tqdm import tqdm
+from src.sequences import fasta_iter
 from tempfile import NamedTemporaryFile
 import numpy as np
 import subprocess
@@ -12,211 +12,302 @@ import re
 class MobiDbLite(object):
 
     # Constructor
-    def __init__(self, cmd=['mobidb_lite.py'], env=os.environ.copy()):
+    def __init__(self, cmd=['mobidb_lite.py'], env=os.environ):
         # Save attributes
         self.cmd = cmd  # Path to MobiDB Lite executable
         self.env = env  # Environmental variables
 
+    # Wrapper for run method
+    def __call__(self, *args, **kwargs):
+        # Just call run method
+        return self.run(*args, **kwargs)
+
     # Run method
-    def run(self, fasta_sequences, out_path=None, verbose=False):
-        """Run MobiDB Lite disorder predictor
-        Takes as input a list of sequences and returns a lis of boolean (1/0)
-        values, where an item has value 1 if the residue in the same position is
-        predicted to be disordered, 0 otherwise.
+    def run(self, fasta_path, out_path=''):
 
-        Args
-        fasta_sequences (dict)  Dictionary whose keys are sequence accession
-                                numbers and values are fasta entries
-        out_path (str)          Where to save MobiDB output file
-        verbose (bool)          Wether to show verbose log or not
+        # Case output path is not set
+        if not out_path:
+            # Make temporary output file
+            out_path = NamedTemporaryFile(delete=False, suffix='.out').name
 
-        Return
-        (dict)                  Dict associating to accession numbers lists of
-                                boolean (1/0) lists
-        """
-        # Define temporary input file
-        fasta_path = NamedTemporaryFile(delete=False).name
-
-        # Check if output file path has been set or must be made
-        make_out = (out_path is None)
-        # If output file must be made
-        if make_out:
-            # Define temporary output file
-            out_path = NamedTemporaryFile(delete=False).name
-
-        # Verbose log
-        if verbose:
-            print('Generating input fasta file...')
-        # Make input fasta file
-        with open(fasta_path, 'w') as fasta_file:
-            # Loop through each input sequence
-            for sequence_acc, fasta_sequence in fasta_sequences.items():
-                # Split fasta entry in header and residues
-                header, residues = tuple(fasta_sequence.split('\n'))
-                # Define new header using only sequence accession number
-                header = '>' + str(sequence_acc)
-                # Write out fasta entry
-                fasta_file.write(header + '\n' + ''.join(residues) + '\n')
-
-        # Verbose log
-        if verbose:
-            'Executing MobiDB Lite predictor...'
-        # Initialize timers
-        time_beg, time_end = time.time(), None
         # Run MobiDB Lite command
-        ran = subprocess.run(
+        return subprocess.run(
             capture_output=True,  # Capture console output
             encoding='utf-8',  # stdout/stderr encoding
             check=True,  # Check that script worked properly
             env=self.env,  # Environmental variables
             args=[*self.cmd, '-o', out_path, fasta_path]
         )
-        # Update timers
-        time_end = time.time()
 
-        # Verbose log
-        if verbose:
-            print('Command line output:', ran)
-            print('Took {:.0f} seconds to predict disordered regions over {:d} sequences'.format(
-                time_end - time_beg,  # Time took to run
-                len(fasta_sequences)  # Number of input sequences
-            ))
+    # # Run method
+    # def run(self, fasta_sequences, out_path=None, verbose=False):
+    #     """Run MobiDB Lite disorder predictor
+    #     Takes as input a list of sequences and returns a lis of boolean (1/0)
+    #     values, where an item has value 1 if the residue in the same position is
+    #     predicted to be disordered, 0 otherwise.
+    #
+    #     Args
+    #     fasta_sequences (dict)  Dictionary whose keys are sequence accession
+    #                             numbers and values are fasta entries
+    #     out_path (str)          Where to save MobiDB output file
+    #     verbose (bool)          Wether to show verbose log or not
+    #
+    #     Return
+    #     (dict)                  Dict associating to accession numbers lists of
+    #                             boolean (1/0) lists
+    #     """
+    #     # Define temporary input file
+    #     fasta_path = NamedTemporaryFile(delete=False).name
+    #
+    #     # Check if output file path has been set or must be made
+    #     make_out = (out_path is None)
+    #     # If output file must be made
+    #     if make_out:
+    #         # Define temporary output file
+    #         out_path = NamedTemporaryFile(delete=False).name
+    #
+    #     # Verbose log
+    #     if verbose:
+    #         print('Generating input fasta file...')
+    #     # Make input fasta file
+    #     with open(fasta_path, 'w') as fasta_file:
+    #         # Loop through each input sequence
+    #         for sequence_acc, fasta_sequence in fasta_sequences.items():
+    #             # Split fasta entry in header and residues
+    #             header, residues = tuple(fasta_sequence.split('\n'))
+    #             # Define new header using only sequence accession number
+    #             header = '>' + str(sequence_acc)
+    #             # Write out fasta entry
+    #             fasta_file.write(header + '\n' + ''.join(residues) + '\n')
+    #
+    #     # Verbose log
+    #     if verbose:
+    #         'Executing MobiDB Lite predictor...'
+    #     # Initialize timers
+    #     time_beg, time_end = time.time(), None
+    #     # Run MobiDB Lite command
+    #     ran = subprocess.run(
+    #         capture_output=True,  # Capture console output
+    #         encoding='utf-8',  # stdout/stderr encoding
+    #         check=True,  # Check that script worked properly
+    #         env=self.env,  # Environmental variables
+    #         args=[*self.cmd, '-o', out_path, fasta_path]
+    #     )
+    #     # Update timers
+    #     time_end = time.time()
+    #
+    #     # Verbose log
+    #     if verbose:
+    #         print('Command line output:', ran)
+    #         print('Took {:.0f} seconds to predict disordered regions over {:d} sequences'.format(
+    #             time_end - time_beg,  # Time took to run
+    #             len(fasta_sequences)  # Number of input sequences
+    #         ))
+    #
+    #     # Verbose log
+    #     if verbose:
+    #         print('Fetching MobiDB Lite results...')
+    #     # Initialize empty dict(acc: residues positions)
+    #     disorder = dict()
+    #     # Read output file
+    #     with open(out_path, 'r') as out_file:
+    #         # Read through each line of MobiDB Lite
+    #         for line in out_file, disable=(not verbose)):
+    #             # Check if line is matching expected format
+    #             match = re.search(r'^(\S+)\s+(\d+)\s+(\d+)', line)
+    #             # Case line does not matches format
+    #             if not match:
+    #                 continue  # Skip iteration
+    #             # Retrieve sequence accession
+    #             acc = match.group(1)
+    #             # Retrieve disordered region boundaries
+    #             dis_beg, dis_end = int(match.group(2)), int(match.group(3))
+    #             # Add current sequence accession entry if any
+    #             disorder.setdefault(acc, [])
+    #             # Split associated fasta sequence in header and residues
+    #             header, residues = tuple(fasta_sequences.get(acc).split('\n'))
+    #             # Add disordered region as list of ones and zeroes
+    #             disorder.get(acc).append([
+    #                 # Set 1 if resiude is disordered, 0 otherwise
+    #                 int(i in set(range(dis_beg-1, dis_end)))
+    #                 # Loop through each position in residues list
+    #                 for i in range(len(residues))
+    #             ])
+    #
+    #     # Add non-predicted entries (as arrays of zeroes only)
+    #     for acc in set(fasta_sequences.keys()) - set(disorder.keys()):
+    #         # Get header and residues for current sequence
+    #         header, residues = tuple(fasta_sequences.get(acc).split('\n'))
+    #         # Create an array of zeroes with length #resdiues
+    #         disorder[acc] = [[0] * len(residues)]
+    #
+    #     # Delete temporary FASTA file
+    #     os.remove(fasta_path)
+    #
+    #     # Eventually, remove output temporary file
+    #     if make_out:
+    #         os.remove(out_path)
+    #
+    #     # Return disordered regions
+    #     return disorder
+    #
+    # @staticmethod
+    # def compute_bias(sequences):
+    #     """Computes computational bias
+    #     Compositional bias is just the rate of disordered residues over total
+    #     number of residues in a set of sequences.
+    #
+    #     Args
+    #     sequences (dict)    Dictionary associating accession numbers to list of
+    #                         disorder predictions
+    #
+    #     Return
+    #     (float)             Compositional bias (rate of disordered residues over
+    #                         total number of residues)
+    #     """
+    #     # Initialize total number of residues
+    #     num_residues = 0
+    #     # Initialize number of disordered residues
+    #     num_disorder = 0
+    #
+    #     # Go through each sequence accession number
+    #     for acc in sequences.keys():
+    #         # Define residues matrix (#regions, #residues)
+    #         seq = np.array(sequences[acc], dtype=np.int)
+    #         # Define number of regions and number of residues
+    #         n, m = seq.shape
+    #         # Update number of disordered residues
+    #         num_disorder += seq.sum()
+    #         # Update number of total residues
+    #         num_residues += m
+    #
+    #     # Compute compositional bias
+    #     comp_bias = num_disorder / num_residues
+    #     # Return compositional bias
+    #     return comp_bias
+    #
+    # @staticmethod
+    # def apply_threshold(sequences, threshold=0, inclusive=False):
+    #     """Apply threshold over disorder predictions
+    #     Defines wether a region is actually disordered or not by applying a
+    #     threshold over number of positive predictions (1) for each residue.
+    #
+    #     Args
+    #     sequences (dict)                Dictionary associating accession numbers
+    #                                     to list of predictions
+    #     threshold (int/str)             Number of potitive predictions needed to
+    #                                     consider a residue actually positive
+    #     inclusive (bool)                Wether to use an inclusive threshold
+    #                                     (greater or equal) or an exclusive
+    #                                     threshold (just greater)
+    #
+    #     Return
+    #     (dict(str: list))               Dictionary associating accession numbers
+    #                                     to thresholded residues lists (not a
+    #                                     list of lists anymore)
+    #     """
+    #     # Initialize an empty output sequences dictionary
+    #     disorder = dict()
+    #     # Loop through each input sequences accession numbers
+    #     for acc in sequences.keys():
+    #         # Retrieve current accession predictions (summed along rows)
+    #         pred = np.array(sequences[acc], dtype=np.int).sum(axis=0)
+    #
+    #         # Case all predictions must be positive to return positive
+    #         if threshold == 'all':
+    #             # Define number of rows and columns
+    #             n, m = pred.shape
+    #             # Apply threshold over sum over columns
+    #             pred = (pred >= n)
+    #
+    #         # Case threshold is inclusive
+    #         elif inclusive:
+    #             # Apply threshold to sum over columns
+    #             pred = (pred >= threshold)
+    #
+    #         # Case threshold is exclusive
+    #         else:
+    #             # Apply threshold to sum over columns
+    #             pred = (pred > threshold)
+    #
+    #         # Turn boolean vector into integer 0/1 vector
+    #         pred = pred.astype(np.int)
+    #
+    #         # Otherwise, save thresholded prediction as list
+    #         disorder[acc] = [pred.tolist()]
+    #
+    #     # Return thresholded disordered regions
+    #     return disorder
 
-        # Verbose log
-        if verbose:
-            print('Fetching MobiDB Lite results...')
-        # Initialize empty dict(acc: residues positions)
-        disorder = dict()
-        # Read output file
-        with open(out_path, 'r') as out_file:
-            # Read through each line of MobiDB Lite
-            for line in tqdm(out_file, disable=(not verbose)):
-                # Check if line is matching expected format
-                match = re.search(r'^(\S+)\s+(\d+)\s+(\d+)', line)
-                # Case line does not matches format
-                if not match:
-                    continue  # Skip iteration
-                # Retrieve sequence accession
-                acc = match.group(1)
-                # Retrieve disordered region boundaries
-                dis_beg, dis_end = int(match.group(2)), int(match.group(3))
-                # Add current sequence accession entry if any
-                disorder.setdefault(acc, [])
-                # Split associated fasta sequence in header and residues
-                header, residues = tuple(fasta_sequences.get(acc).split('\n'))
-                # Add disordered region as list of ones and zeroes
-                disorder.get(acc).append([
-                    # Set 1 if resiude is disordered, 0 otherwise
-                    int(i in set(range(dis_beg-1, dis_end)))
-                    # Loop through each position in residues list
-                    for i in range(len(residues))
-                ])
 
-        # Add non-predicted entries (as arrays of zeroes only)
-        for acc in set(fasta_sequences.keys()) - set(disorder.keys()):
-            # Get header and residues for current sequence
-            header, residues = tuple(fasta_sequences.get(acc).split('\n'))
-            # Create an array of zeroes with length #resdiues
-            disorder[acc] = [[0] * len(residues)]
+class Disorder(object):
 
-        # Delete temporary FASTA file
-        os.remove(fasta_path)
-
-        # Eventually, remove output temporary file
-        if make_out:
-            os.remove(out_path)
-
-        # Return disordered regions
-        return disorder
+    # Constructor
+    def __init__(self, path):
+        # Save path to file
+        self.path = path
+        # Initialize disordered regions dict(acc: disordered region)
+        self.regions = dict()
+        # Load file from path
+        with open(self.path, 'r') as file:
+            # Define file iterator
+            iter = self.iterator(file)
+            # Iterate through file and store table
+            for acc, beg, end in iter:
+                # Add new entry to current accession
+                self.regions.setdefault(acc, [])
+                # Append current region
+                self.regions[acc] += [(beg, end)]
 
     @staticmethod
-    def compute_bias(sequences):
-        """Computes computational bias
-        Compositional bias is just the rate of disordered residues over total
-        number of residues in a set of sequences.
+    def iterator(iterable):
+        # Loop through iterable
+        for line in iterable:
+            # Check if line is matching expected format
+            match = re.search(r'^(\S+)\s+(\d+)\s+(\d+)', line)
+            # Case line is not matching expected format
+            if not match:
+                # Skip line
+                continue
+            # Retrieve sequence accession
+            accession = match.group(1)
+            # Retrieve disordered region boundaries
+            beg, end = int(match.group(2)), int(match.group(3))
+            # Yield triple seuquence accession, disordered region boundaries
+            yield accession, beg, end
 
-        Args
-        sequences (dict)    Dictionary associating accession numbers to list of
-                            disorder predictions
-
-        Return
-        (float)             Compositional bias (rate of disordered residues over
-                            total number of residues)
-        """
-        # Initialize total number of residues
-        num_residues = 0
-        # Initialize number of disordered residues
-        num_disorder = 0
-
-        # Go through each sequence accession number
-        for acc in sequences.keys():
-            # Define residues matrix (#regions, #residues)
-            seq = np.array(sequences[acc], dtype=np.int)
-            # Define number of regions and number of residues
-            n, m = seq.shape
-            # Update number of disordered residues
-            num_disorder += seq.sum()
-            # Update number of total residues
-            num_residues += m
-
+    # Compute compositional bias
+    def compute_bias(self, fasta_path, threshold=1, inclusive=True):
         # Compute compositional bias
-        comp_bias = num_disorder / num_residues
-        # Return compositional bias
-        return comp_bias
+        # Initialize predictions dict(sequence acc: binary pred)
+        pred = dict()
+        # Open input fasta file
+        with open(fasta_path, 'r') as file:
+            # Loop through each fasta entry
+            for entry in fasta_iter(file):
+                # Split entry in header and residues
+                head, resid = tuple(entry.split('\n'))
+                # Get accession out of header
+                acc = re.search(r'^>(\S+)', head)
 
-    @staticmethod
-    def apply_threshold(sequences, threshold=0, inclusive=False):
-        """Apply threshold over disorder predictions
-        Defines wether a region is actually disordered or not by applying a
-        threshold over number of positive predictions (1) for each residue.
+                # Append a zeroes vector (none is predicted disordered)
+                pred[acc] = [0] * len(resid)
+                # Loop through all disorder predictions
+                for beg, end in self.regions.get(acc, []):
+                    # Make a new binary vector with ones between region bounds
+                    pred[acc] += [
+                        # Set 1 if resiude is disordered, 0 otherwise
+                        pred[acc][i] + 1
+                        # Loop through each position in residues list
+                        for i in range(beg-1, end)
+                    ]
 
-        Args
-        sequences (dict)                Dictionary associating accession numbers
-                                        to list of predictions
-        threshold (int/str)             Number of potitive predictions needed to
-                                        consider a residue actually positive
-        inclusive (bool)                Wether to use an inclusive threshold
-                                        (greater or equal) or an exclusive
-                                        threshold (just greater)
-
-        Return
-        (dict(str: list))               Dictionary associating accession numbers
-                                        to thresholded residues lists (not a
-                                        list of lists anymore)
-        """
-        # Initialize an empty output sequences dictionary
-        disorder = dict()
-        # Loop through each input sequences accession numbers
-        for acc in sequences.keys():
-            # Retrieve current accession predictions (summed along rows)
-            pred = np.array(sequences[acc], dtype=np.int).sum(axis=0)
-
-            # Case all predictions must be positive to return positive
-            if threshold == 'all':
-                # Define number of rows and columns
-                n, m = pred.shape
-                # Apply threshold over sum over columns
-                pred = (pred >= n)
-
-            # Case threshold is inclusive
-            elif inclusive:
-                # Apply threshold to sum over columns
-                pred = (pred >= threshold)
-
-            # Case threshold is exclusive
-            else:
-                # Apply threshold to sum over columns
-                pred = (pred > threshold)
-
-            # Turn boolean vector into integer 0/1 vector
-            pred = pred.astype(np.int)
-
-            # Otherwise, save thresholded prediction as list
-            disorder[acc] = [pred.tolist()]
-
-        # Return thresholded disordered regions
-        return disorder
-
+        # # Initialize residues counter
+        # num_residues, num_disorder = 0, 0
+        # # Loop through each prediction
+        # for acc in pred:
+        #     # Use numpy to sum along the rows
+        #     freq = np.array(pred[acc], dtype=np.int)
 
 # Unit test
 if __name__ == '__main__':

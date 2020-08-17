@@ -12,7 +12,7 @@ from src.hmm.hmmalign import HMMAlign
 from src.hmm.hmmer import Tblout, Domtblout
 from src.hmm.hmmer import merge_scores, merge_hits
 from src.hmm.hmm import HMM
-from src.disorder import MobiDbLite
+from src.disorder import MobiDbLite #, Disorder
 from src.mgnifam import Cluster
 from src.utils import benchmark, is_gzip, gunzip, as_bytes
 from subprocess import CalledProcessError
@@ -151,6 +151,18 @@ class Build(Pipeline):
             self.search_fasta_sequences(
                 clusters_path=clusters_path,
                 client=client,
+                verbose=verbose
+            )
+
+            # Check that cluster members contain all the required sequences
+            self.check_cluster_members(
+                clusters_path=clusters_path,
+                verbose=verbose
+            )
+
+            # Check compositional bias
+            self.check_comp_bias(
+                clusters_path=clusters_path,
                 verbose=verbose
             )
 
@@ -461,7 +473,6 @@ class Build(Pipeline):
         # Loop through all sequence accession
         for accession in accessions:
 
-
             # Case sequence accession is not among the retrieved ones
             if accession not in set(fasta_sequences.keys()):
                 # Skip iteration
@@ -540,17 +551,6 @@ class Build(Pipeline):
         if verbose:
             print('done in {:.0f} seconds'.format(time_end -time_beg))
 
-    # # Check cluster members found
-    # def check_cluster_members(self, cluster_names, cluster_members):
-    #     # Check that cluster members keys are the same as cluster names
-    #     if set(cluster_names) != set(cluster_members.keys()):
-    #         # Raise new exception and interupt execution
-    #         raise KeyError(' '.join([
-    #             'Error: cluster members have not been retrieved for',
-    #             'all the {:d} input clusters: '.format(len(cluster_names)),
-    #             'aborting pipeline execution'
-    #         ]))
-
     # Search for fasta sequences
     def search_fasta_sequences(self, clusters_path, client, verbose=False):
         """ Retrieve fasra sequences from a Fasta dataset
@@ -572,8 +572,6 @@ class Build(Pipeline):
         clusters_iter = glob(os.path.join(clusters_path, 'MGYP*'))
         # Loop through each cluster
         for cluster_path in clusters_iter:
-            # # DEBUG
-            # print('Cluster path:', cluster_path)
             # Define cluster name
             cluster_name = os.path.basename(cluster_path)
 
@@ -583,13 +581,10 @@ class Build(Pipeline):
             with open(head_path, 'r') as file:
                 # Iterate fasta file (extract sequence only accession)
                 for entry in fasta_iter(file):
-                    # # DEBUG
-                    # print('Fasta entry:')
-                    # print(entry)
                     # Get header from file
                     header, _, = tuple(entry.split('\n'))
                     # Retrieve sequence accession number
-                    accession = re.search('>(\S+)', header).group(1)
+                    accession = re.search(r'>(\S+)', header).group(1)
                     # Initialize accession into sequences dictionary
                     sequences_acc.setdefault(accession, list())
                     # Append current cluster name to sequences dictionary
@@ -623,69 +618,95 @@ class Build(Pipeline):
         if verbose:
             print('done in {:.0f} seconds'.format(time_end - time_beg))
 
-        #
-        # # Verbose log
-        # if verbose:
-        #     print('Searching {:d}'.format(len(sequences_acc)), end=' ')
-        #     print('FASTA sequences')
-        #
-        # # Initialize futures
-        # futures = list()
-        # # Loop through each chunk in given FASTA dataset
-        # for chunk in fasta_dataset:
-        #     # Submit search function against FASTA dataset
-        #     future = client.submit(chunk.search, sequences_acc, ret_length=True)
-        #     # Save future
-        #     futures.append(future)
-        #
-        # # Gather results
-        # results = client.gather(futures)
-        #
-        # # Initialize FASTA sequences dict(sequence accession: fasta entry)
-        # fasta_sequences = dict()
-        # # Initialize length of FASTA file
-        # fasta_length = 0
-        # # Go through each result
-        # for i in range(len(results)):
-        #     # Retrieve either chunk sequences dict and chunk length
-        #     chunk_sequences, chunk_length = results[i]
-        #     # Update cluster sequences dictionary
-        #     for sequence_acc in chunk_sequences:
-        #         fasta_sequences[sequence_acc] = chunk_sequences[sequence_acc]
-        #     # Update length of FASTA file
-        #     fasta_length = fasta_length + chunk_length
-        #
-        # # Verbose log
-        # if verbose:
-        #     print('Retrieved {:d} fasta'.format(len(fasta_sequences)), end=' ')
-        #     print('entries from dataset of size {}'.format(fasta_length))
-        #
-        # # Return either the sequences dictionary and the dataset length
-        # return fasta_sequences, fasta_length
+    # Check cluster members found
+    def check_cluster_members(self, clusters_path, verbose=False):
+        # Initialize timers
+        time_beg, time_end = time(), 0.0
 
-    # Check fasta sequences found
-    def check_fasta_sequences(self, sequences_acc, fasta_sequences):
-        # Loop through all required seuqnece accession numbers
-        for sequence_acc in sequences_acc:
-            # Check if sequnece accession is available and not empty
-            if not fasta_sequences.get(sequence_acc, ''):
-                # Raise new error
+        # Define clusters iterator
+        clusters_iter = glob(clusters_path, 'MGYP*')
+        # Verbose
+        if verbose:
+            print('Checking sequences for', end=' ')
+            print('%d clusters...' % len(clusters_iter), end='')
+
+        # Loop through each cluster in clusters path
+        for cluster_path in clusters_iter:
+            # Define cluster name
+            cluster_name = os.path.basename(cluster_path)
+            # Define header file path
+            head_path = os.path.join(cluster_path, 'SEED.head.fa')
+            # Define fasta file path
+            fasta_path = os.path.join(clusters_path, 'SEED.fa')
+
+            # Initialize sequences accession numbers
+            sequences_acc = set()
+            # Open header file
+            with open(head_path, 'r') as file:
+                # Iterate through fasta file
+                for entry in fasta_iter(file):
+                    # Split entry in header and residues
+                    header, _ = tuple(entry.split('\n'))
+                    # Retrieve accession
+                    accession = re.search(r'^>(\S+)', header)
+                    # Store header
+                    sequences_acc.add(accession)
+
+            # Open fasta file
+            with open(fasta_path, 'r') as file:
+                # Iterate through fasta file
+                for entry in fasta_iter(file):
+                    # Split entry in header and residues
+                    header, _ = tuple(entry.split('\n'))
+                    # Retrieve accession
+                    accession = re.search(r'^>(\S+)', header)
+                    # Remove header from stored ones
+                    sequences_acc.remove(accession)
+
+            # Case there are sequence accession number left
+            if len(sequences_acc) > 0:
+                # Some accession has not been retrieved: raise error
                 raise KeyError(' '.join([
-                    'Error: required sequence accession number',
-                    '{} has no associated fasta entry:'.format(sequence_acc),
-                    'aborting pipeline execution'
+                    'not all cluster members have been retrieved for',
+                    'cluster %s: aborting pipeline execution' % cluster_name,
+                    ''
                 ]))
 
+        # Update timers
+        time_end = time()
+        # Verbose
+        print('done in %.0f seconds' % (time_end - time_beg))
+
+    # # Check fasta sequences found
+    # def check_fasta_sequences(self, sequences_acc, fasta_sequences):
+    #     # Loop through all required seuqnece accession numbers
+    #     for sequence_acc in sequences_acc:
+    #         # Check if sequnece accession is available and not empty
+    #         if not fasta_sequences.get(sequence_acc, ''):
+    #             # Raise new error
+    #             raise KeyError(' '.join([
+    #                 'Error: required sequence accession number',
+    #                 '{} has no associated fasta entry:'.format(sequence_acc),
+    #                 'aborting pipeline execution'
+    #             ]))
+
     # Check compositional bias
-    def check_comp_bias(self, clusters_path, bias_path, cluster_members, fasta_sequences, client, verbose=False):
+    def check_comp_bias(self, clusters_path, client, verbose=False):
         """ Check compositional bias
 
-        Given a cluster members dictionary and a fasta sequences dictionary,
-        makes clusters dict(cluster members: fasta sequences). Then makes
-        disorder predictions over the sequences: if rate of disordered residues
-        is too high, cluster is discarded
+        Loop through each cluster sub-directory, compute compositional bias
+        over SEED.fa sequences file. Computation is carried out by MobiDB
+        Lite executable, whore results are stored as disorder.out file.
+        File is then parsed and BIAS is computed and stored in disorder.bias
+        file: if value is too high (over the threshold), then cluster is
+        discarded.
 
         Args
+        clusters_path (str)         Path where all clusters can be found
+        client (Dask.Client)        Dask Client used to schedule jobs
+        verbose (bool)              Whether to print verbose log or not
+
+
         cluster_members (dict)      Dictionary mappung cluster names to cluster
                                     seqeunces accession numbers
         fasta_sequences (dict)      Dictionary mapping seqeunces accession
@@ -699,126 +720,179 @@ class Build(Pipeline):
         (dict)                      Input cluster entries below compositional
                                     bias threshold
         """
-        # Verbose log
-        if verbose:
-            print('Computing compositional bias', end=' ')
-            print('for {:d} clusters'.format(len(cluster_members)), end=' ')
-            print('and {:d} sequences'.format(len(fasta_sequences)))
+        # Initialize timers
+        time_beg, time_end = time(), 0.0
 
-        # Initialize futures dict(cluster name: compositional bias)
-        futures = dict()
+        # Define clusters iterator
+        clusters_iter = glob(os.path.join(clusters_path, 'MGYP*'))
+        # Verbose
+        if verbose:
+            print('Checking compositional bias for', end=' ')
+            print('%d clusters...' % len(clusters_iter), end='')
+
+        # Initialize distributed functions container
+        futures = list()
         # Loop through each cluster
-        for cluster_name in cluster_members:
-
-            # Define a cluster sequences dict(sequence acc: fasta entry)
-            cluster_sequences = dict()
-            # Loop through each sequence accession in cluster
-            for acc in cluster_members.get(cluster_name):
-                # Retrieve fasta sequence
-                cluster_sequences[acc] = fasta_sequences[acc]
-
-            # Run distributed compositional bias computation
-            futures[cluster_name] = client.submit(
+        for cluster_path in clusters_iter:
+            # Define cluster name
+            cluster_name = os.path.basename(cluster_path)
+            # Define path where cluster will be discarded
+            discard_path = os.path.join(clusters_path, 'bias', cluster_name)
+            # Distribute computation
+            future = client.submit(
                 func=self.compute_comp_bias,
-                fasta_sequences=cluster_sequences,
-                pred_threshold=1,  # Set threshold for disorder prediction
-                pred_inclusive=True,  # Set thresold inclusive
-                mobidb=self.mobidb
+                cluster_path=cluster_path,
+                discard_path=discard_path,
+                threshold=self.comp_bias_threshold,
+                inclusive=self.comp_bias_inclusive
             )
+            # Store future
+            futures.append(future)
 
-        # Retrieve results
-        results = client.gather(futures)
+        # Retrieve distributed functions results
+        client.gather(futures)
 
-        # Initialize set of clusters below and above threshold
-        bias_below, bias_above = set(), set()
-        # Retrieve compositional bias threshold
-        threshold = self.comp_bias_threshold
-        # Retrieve compositional bias threshold is inclusive or not
-        inclusive = self.comp_bias_inclusive
-        # Loop through each cluster name in results
-        for cluster_name in results.keys():
-
-            # Define current cluster path
-            cluster_path = os.path.join(clusters_path, cluster_name)
-            # Encure that cluster path exists
-            if not os.path.isdir(cluster_path):
-                # Make new directory
-                os.mkdir(cluster_path)
-
-            # Retrieve cluster bias
-            cluster_bias = results.get(cluster_name, 1.0)
-
-            # Write bias score to file
-            with open(os.path.join(cluster_path, 'BIAS'), 'w') as file:
-                file.write(str(cluster_bias))
-
-            # Define target path if bias is too high
-            target_path = os.path.join(bias_path, cluster_name)
-            # Case compositional bias threshold is inclusive
-            if (cluster_bias >= threshold) and inclusive:
-                # Move cluster subfolder into BIAS folder
-                shutil.move(cluster_path, target_path)
-                # Add cluster name to the above threshold set
-                bias_above.add(cluster_name)
-                # Go to next iteration
-                continue
-            # Case compositional bias threshold is exclusive
-            if (cluster_bias > threshold) and not inclusive:
-                # Move cluster subfolder into BIAS folder
-                shutil.move(cluster_path, target_path)
-                # Add cluster name to the above threshold set
-                bias_above.add(cluster_name)
-                # Go to next iteration
-                continue
-
-            # By default, add cluster name to the below threshold set
-            bias_below.add(cluster_name)
-
-        # Verbose log
+        # Verbose
         if verbose:
-            print('Compositional bias computed for {:d} clusters'.format(len(cluster_members)), end=' ')
-            print('among which {:d} were below'.format(len(bias_below)), end=' ')
-            print('threshold of {:.02f},'.format(self.comp_bias_threshold), end=' ')
-            print('while {:d} were above it'.format(len(bias_above)))
+            # Update timers
+            time_end = time()
+            # Print execution time
+            print('done in %.0f seconds:' % (time_end - time_beg))
 
-        # Return both below and above threshold sets
-        return bias_below, bias_above
+            # Retrieve clusters kept
+            kept = glob(os.path.join(clusters_path, 'MGYP*'))
+            # Retrieve clusters discarded
+            discarded = glob(os.path.join(clusters_path, 'bias', 'MGYP*'))
+            # Show number of kept and discarded clusters
+            print('  %d clusters have been kept' % len(kept))
+            print('  %d clusters have been discarded' % len(discarded))
+
+
+        # # Verbose log
+        # if verbose:
+        #     print('Computing compositional bias', end=' ')
+        #     print('for {:d} clusters'.format(len(cluster_members)), end=' ')
+        #     print('and {:d} sequences'.format(len(fasta_sequences)))
+        #
+        # # Initialize futures dict(cluster name: compositional bias)
+        # futures = dict()
+        # # Loop through each cluster
+        # for cluster_name in cluster_members:
+        #
+        #     # Define a cluster sequences dict(sequence acc: fasta entry)
+        #     cluster_sequences = dict()
+        #     # Loop through each sequence accession in cluster
+        #     for acc in cluster_members.get(cluster_name):
+        #         # Retrieve fasta sequence
+        #         cluster_sequences[acc] = fasta_sequences[acc]
+        #
+        #     # Run distributed compositional bias computation
+        #     futures[cluster_name] = client.submit(
+        #         func=self.compute_comp_bias,
+        #         fasta_sequences=cluster_sequences,
+        #         pred_threshold=1,  # Set threshold for disorder prediction
+        #         pred_inclusive=True,  # Set thresold inclusive
+        #         mobidb=self.mobidb
+        #     )
+        #
+        # # Retrieve results
+        # results = client.gather(futures)
+        #
+        # # Initialize set of clusters below and above threshold
+        # bias_below, bias_above = set(), set()
+        # # Retrieve compositional bias threshold
+        # threshold = self.comp_bias_threshold
+        # # Retrieve compositional bias threshold is inclusive or not
+        # inclusive = self.comp_bias_inclusive
+        # # Loop through each cluster name in results
+        # for cluster_name in results.keys():
+        #
+        #     # Define current cluster path
+        #     cluster_path = os.path.join(clusters_path, cluster_name)
+        #     # Encure that cluster path exists
+        #     if not os.path.isdir(cluster_path):
+        #         # Make new directory
+        #         os.mkdir(cluster_path)
+        #
+        #     # Retrieve cluster bias
+        #     cluster_bias = results.get(cluster_name, 1.0)
+        #
+        #     # Write bias score to file
+        #     with open(os.path.join(cluster_path, 'BIAS'), 'w') as file:
+        #         file.write(str(cluster_bias))
+        #
+        #     # Define target path if bias is too high
+        #     target_path = os.path.join(bias_path, cluster_name)
+        #     # Case compositional bias threshold is inclusive
+        #     if (cluster_bias >= threshold) and inclusive:
+        #         # Move cluster subfolder into BIAS folder
+        #         shutil.move(cluster_path, target_path)
+        #         # Add cluster name to the above threshold set
+        #         bias_above.add(cluster_name)
+        #         # Go to next iteration
+        #         continue
+        #     # Case compositional bias threshold is exclusive
+        #     if (cluster_bias > threshold) and not inclusive:
+        #         # Move cluster subfolder into BIAS folder
+        #         shutil.move(cluster_path, target_path)
+        #         # Add cluster name to the above threshold set
+        #         bias_above.add(cluster_name)
+        #         # Go to next iteration
+        #         continue
+        #
+        #     # By default, add cluster name to the below threshold set
+        #     bias_below.add(cluster_name)
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('Compositional bias computed for {:d} clusters'.format(len(cluster_members)), end=' ')
+        #     print('among which {:d} were below'.format(len(bias_below)), end=' ')
+        #     print('threshold of {:.02f},'.format(self.comp_bias_threshold), end=' ')
+        #     print('while {:d} were above it'.format(len(bias_above)))
+        #
+        # # Return both below and above threshold sets
+        # return bias_below, bias_above
 
     @staticmethod
-    def compute_comp_bias(fasta_sequences, mobidb, pred_threshold=1, pred_inclusive=True):
+    def compute_comp_bias(cluster_path, discard_path, threshold, inclusive, mobidb):
         """ Compute compositional bias for a cluster
 
-        Given a sequences dict(seqeunce acc: fasta entry), run MobiDbLite
-        predictor against them and produces a disordered prediction for each
-        residue. A residue is considered to be disordere if it has at least
-        <pred_threshold> disordered predictions.
-
-        Once disordered predictiona are computed, compositional bias is
-        calculated as rate of predicted disordered residues over number of
-        total residues.
+        Compute compositional bias through MobiDB Lite disorder predictor.
+        Given cluster is discarded if compositional bias threshold is exceeded.
 
         Args
         seqeunces (dict)        Dictionary mapping sequence accession to actual
                                 FASTA entry
-        mobidb (MobiDbLite)     Instance of MobiDB Lite interface
+
         pred_threshold (int)    Number of times a residue must be predicted
                                 disordered to be considered disordered.
         pred_inclusive (bool)   Wether the prediction threshold should be
                                 inclusive or not
-
-        Return
-        (float)                 Compositional bias score
+        mobidb (MobiDbLite)     Instance of MobiDB Lite interface
         """
-        # Make predictions running MobiDB Lite
-        predictions = mobidb.run(fasta_sequences=fasta_sequences)
-        # Apply threshold over predictions
-        predictions = mobidb.apply_threshold(
-            sequences=predictions,
-            threshold=pred_threshold,
-            inclusive=pred_inclusive
-        )
-        # Compute and return compositional bias
-        return mobidb.compute_bias(predictions)
+        # Define fasta (input) path
+        fasta_path = os.path.join(cluster_path, 'SEED.fa')
+        # Define output path
+        out_path = os.path.join(cluster_path, 'mobidb.out')
+        # Define path to bias
+        bias_path = os.path.join(cluster_path, 'mobidb.bias')
+
+        # Run MobiDB Lite
+        mobidb.run(fasta_path=fasta_path, out_path=out_path)
+
+        # TODO Parse output file
+        # Disorder(path=out_path)
+
+        # # Make predictions running MobiDB Lite
+        # predictions = mobidb.run(fasta_sequences=fasta_sequences)
+        # # Apply threshold over predictions
+        # predictions = mobidb.apply_threshold(
+        #     sequences=predictions,
+        #     threshold=pred_threshold,
+        #     inclusive=pred_inclusive
+        # )
+        # # Compute and return compositional bias
+        # return mobidb.compute_bias(predictions)
 
     # Make SEED alignments
     def make_seed_alignments(self, cluster_members, fasta_sequences, clusters_path, client, verbose=False):
@@ -2155,6 +2229,11 @@ if __name__ == '__main__':
         '-M', '--max_memory', type=str, default='1 GB',
         help='Maximum memory allocable per process'
     )
+    # Define walltime
+    group.add_argument(
+        '-W', '--walltime', type=str, default='02:00',
+        help='How long can a process be kept alive'
+    )
     # Retrieve arguments
     args = parser.parse_args()
 
@@ -2170,6 +2249,8 @@ if __name__ == '__main__':
             # Define memory boundaries
             min_memory=args.min_memory,
             max_memory=args.max_memory,
+            # Define walltime
+            walltime=args.walltime,
             # Define processes per job
             processes=1
         )
