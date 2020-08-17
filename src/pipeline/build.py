@@ -163,7 +163,8 @@ class Build(Pipeline):
             # Check compositional bias
             self.check_comp_bias(
                 clusters_path=clusters_path,
-                verbose=verbose
+                verbose=verbose,
+                client=client
             )
 
         # # Check cluster members
@@ -455,6 +456,8 @@ class Build(Pipeline):
                 for accession in sequences_acc:
                     # Write new line to file
                     file.write('>' + accession + '\n')
+        # Exit
+        return
 
     @staticmethod
     def make_seed_fasta(mgnifam_chunk, clusters_path, sequences_acc):
@@ -492,6 +495,8 @@ class Build(Pipeline):
                 with open(fasta_path, 'a+') as file:
                     # Append fasta entry to file
                     file.write(fasta_entry + '\n')
+        # Exit
+        return
 
     # Search for cluster members
     def search_cluster_members(self, clusters_path, cluster_names, client, verbose=False):
@@ -624,7 +629,7 @@ class Build(Pipeline):
         time_beg, time_end = time(), 0.0
 
         # Define clusters iterator
-        clusters_iter = glob(clusters_path, 'MGYP*')
+        clusters_iter = glob(os.path.join(clusters_path, 'MGYP*'))
         # Verbose
         if verbose:
             print('Checking sequences for', end=' ')
@@ -637,7 +642,7 @@ class Build(Pipeline):
             # Define header file path
             head_path = os.path.join(cluster_path, 'SEED.head.fa')
             # Define fasta file path
-            fasta_path = os.path.join(clusters_path, 'SEED.fa')
+            fasta_path = os.path.join(cluster_path, 'SEED.fa')
 
             # Initialize sequences accession numbers
             sequences_acc = set()
@@ -648,10 +653,12 @@ class Build(Pipeline):
                     # Split entry in header and residues
                     header, _ = tuple(entry.split('\n'))
                     # Retrieve accession
-                    accession = re.search(r'^>(\S+)', header)
+                    accession = re.search(r'^>(\S+)', header).group(1)
                     # Store header
                     sequences_acc.add(accession)
 
+            # Initialize set of headers accessions
+            headers_acc = set()
             # Open fasta file
             with open(fasta_path, 'r') as file:
                 # Iterate through fasta file
@@ -659,17 +666,17 @@ class Build(Pipeline):
                     # Split entry in header and residues
                     header, _ = tuple(entry.split('\n'))
                     # Retrieve accession
-                    accession = re.search(r'^>(\S+)', header)
-                    # Remove header from stored ones
-                    sequences_acc.remove(accession)
+                    accession = re.search(r'^>(\S+)', header).group(1)
+                    # Add accession
+                    headers_acc.add(accession)
 
             # Case there are sequence accession number left
-            if len(sequences_acc) > 0:
+            if headers_acc - sequences_acc:
                 # Some accession has not been retrieved: raise error
                 raise KeyError(' '.join([
                     'not all cluster members have been retrieved for',
-                    'cluster %s: aborting pipeline execution' % cluster_name,
-                    ''
+                    'cluster %s:' % cluster_name,
+                    ', '.join(list(headers_acc - sequences_acc))
                 ]))
 
         # Update timers
@@ -1972,7 +1979,7 @@ class Build(Pipeline):
     # Make DESC files
     def make_desc_files(self, clusters_path, sequence_scores, domain_scores, author_name, verbose=False):
         # Loop through each cluster path
-        for cluster_path in glob(clusters_path, 'MGYP*'):
+        for cluster_path in glob(os.path.join(clusters_path, 'MGYP*')):
             # Get cluster name
             cluster_name = os.path.basename(cluster_path)
             # Make new mgnifam cluster DESC file
@@ -2249,6 +2256,10 @@ if __name__ == '__main__':
             # Define memory boundaries
             min_memory=args.min_memory,
             max_memory=args.max_memory,
+            # # Set death timeout
+            # death_timeout=30,
+            # # Set interface
+            # interface='lo',
             # Define walltime
             walltime=args.walltime,
             # Define processes per job

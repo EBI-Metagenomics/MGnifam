@@ -3,6 +3,10 @@ from dask.distributed import Client, LocalCluster
 from distributed.utils import parse_bytes
 from dask_jobqueue import LSFCluster
 from time import time, sleep
+import dask
+
+# Setup Dask
+dask.config.set({"distributed.comm.timeouts.connect": "30s"})
 
 
 # Distributed/local jobs handler
@@ -109,7 +113,7 @@ class LSFScheduler(Scheduler):
         super().__init__(min_cores=min_cores, max_cores=max_cores, min_memory=min_memory, max_memory=max_memory)
         # Define cluster default parameters
         self.cluster_kwargs = {**{
-            'memory': min_memory,
+            'memory': max_memory,
             'cores': min_cores,
             'processes': processes,
             'walltime': walltime
