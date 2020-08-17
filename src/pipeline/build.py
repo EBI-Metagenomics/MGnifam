@@ -1,13 +1,17 @@
 # Dependencies
 from src.pipeline.pipeline import Pipeline
+from src.scheduler import LSFScheduler, LocalScheduler
+from src.dataset import LinClust, Fasta
+from src.sequences import fasta_iter
+
 from src.msa.transform import Compose, OccupancyTrim, OccupancyFilter
 from src.msa.msa import MSA, Muscle
-from src.hmm.hmmer import HMMBuild, HMMAlign
-from src.hmm.hmmsearch import HMMSearch, Tblout, Domtblout
-from src.hmm.hmmsearch import merge_scores, merge_hits
+from src.hmm.hmmbuild import HMMBuild
+from src.hmm.hmmsearch import HMMSearch
+from src.hmm.hmmalign import HMMAlign
+from src.hmm.hmmer import Tblout, Domtblout
+from src.hmm.hmmer import merge_scores, merge_hits
 from src.hmm.hmm import HMM
-from src.dataset import LinClust
-from src.dataset import Fasta
 from src.disorder import MobiDbLite
 from src.mgnifam import Cluster
 from src.utils import benchmark, is_gzip, gunzip, as_bytes
@@ -15,8 +19,10 @@ from subprocess import CalledProcessError
 from tempfile import NamedTemporaryFile
 from glob import glob
 from time import time
+import argparse
 import shutil
 import random
+import json
 import math
 import os
 import re
@@ -33,10 +39,10 @@ class Build(Pipeline):
 
     # Constructor
     def __init__(
-        # Pipeline parameters, required to handle job scheduling
-        self, cluster_type, cluster_kwargs,
-        # Path to datasets (fixed)
-        linclust_path, mgnifam_path, uniprot_path,
+        # Set scheduler: handles remote parallel jobs computation
+        self, scheduler,
+        # Dataset chunks
+        linclust_chunks, mgnifam_chunks, uniprot_chunks,
         # Compositional bias threshold settings
         comp_bias_threshold=0.2, comp_bias_inclusive=True,
         # Automatic trimming settings
@@ -51,18 +57,16 @@ class Build(Pipeline):
         # Command line arguments
         mobidb_cmd=['mobidb_lite.py'],  # Path to MobiDB Lite predictor
         muscle_cmd=['muscle'],  # Path to Muscle alignment algorithm
-        hmm_build_cmd=['hmmbuild'],  # Path to hmmbuild script
-        hmm_align_cmd=['hmmalign'],  # Path to hmmalign script
-        hmm_search_cmd=['hmmsearch'],  # Path to hmmsearch script
+        hmmbuild_cmd=['hmmbuild'],  # Path to hmmbuild script
+        hmmalign_cmd=['hmmalign'],  # Path to hmmalign script
+        hmmsearch_cmd=['hmmsearch'],  # Path to hmmsearch script
         # Environmental variables
         env=os.environ.copy()
     ):
-        # Call parent constructor
-        super().__init__(cluster_type, cluster_kwargs)
         # Save datasets path
-        self.linclust = LinClust.from_list(linclust_path)
-        self.mgnifam = Fasta.from_list(mgnifam_path)
-        self.uniprot = Fasta.from_list(uniprot_path)
+        self.linclust_chunks = linclust_chunks
+        self.mgnifam_chunks = mgnifam_chunks
+        self.uniprot_chunks = uniprot_chunks
         # Save compositional bias parameters
         self.comp_bias_threshold = comp_bias_threshold
         self.comp_bias_inclusive = comp_bias_inclusive
@@ -98,14 +102,15 @@ class Build(Pipeline):
         # Define scripts interfaces
         self.mobidb = MobiDbLite(cmd=mobidb_cmd, env=env)
         self.muscle = Muscle(cmd=muscle_cmd, env=env)
-        self.hmm_build = HMMBuild(cmd=hmm_build_cmd, env=env)
-        self.hmm_align = HMMAlign(cmd=hmm_align_cmd, env=env)
-        self.hmm_search = HMMSearch(cmd=hmm_search_cmd, env=env)
+        self.hmmbuild = HMMBuild(cmd=hmmbuild_cmd, env=env)
+        self.hmmalign = HMMAlign(cmd=hmmalign_cmd, env=env)
+        self.hmmsearch = HMMSearch(cmd=hmmsearch_cmd, env=env)
+        # Store scheduler instance
+        self.scheduler = scheduler
         # Store environmental variables
         self.env = env
 
-    # Run the pipeline
-    def run(self, cluster_names, clusters_path, author_name='', min_jobs=1, max_jobs=100, verbose=False):
+    def run(self, cluster_names, clusters_path, author_name='', min_jobs=10, max_jobs=100, verbose=False):
         """ Run BATCH pipeline
 
         Args
@@ -118,225 +123,221 @@ class Build(Pipeline):
         max_jobs (int)              Maximum number of jobs to spawn
         verbose (bool)              Whether to print verbose log or not
 
-        Return
-
         Raise
         """
 
         # Initialize timers
         time_beg, time_end = time(), 0.0
 
-        # Verbose log
         if verbose:
-            print('Running BATCH pipeline', end=' ')
-            print('for {:d} clusters'.format(len(cluster_names)), end=' ')
-            print('at {:s}'.format(clusters_path))
+            print('Building {:d}'.format(len(cluster_names)), end=' ')
+            print('clusters at {:s}'.format(clusters_path))
 
         # Initialize sub-directories
         bias_path, noaln_path, uniprot_path = self.init_subdir(clusters_path)
 
-        # Initialize new cluster
-        cluster, client = self.get_client(dict(cores=1))
-        # Request jobs
-        cluster.adapt(minimum=min_jobs, maximum=max_jobs)
+        # Initialize new scheduler client (with minimum resources available)
+        with self.scheduler.adapt(min_jobs, max_jobs) as client:
 
-        # Fill cluster members dictionary
-        time_run, cluster_members = benchmark(
-            fn=self.search_cluster_members,
-            cluster_names=cluster_names,
-            client=client,
-            verbose=False
-        )
-
-        # Check cluster members
-        self.check_cluster_members(cluster_names, cluster_members)
-
-        # Initialize set of retrieved sequence accession numbers
-        sequences_acc = set()
-        # Loop through each cluster
-        for members_acc in cluster_members.values():
-            # Update sequence accession numbers
-            sequences_acc |= set(members_acc)
-
-        # Get number of clusters
-        num_clusters = len(cluster_members)
-        # Get number of sequences
-        num_sequences = sum([len(c) for c in cluster_members.values()])
-
-        # Verbose log
-        if verbose:
-            print('Retrieved {:d} accession numbers'.format(num_sequences), end=' ')
-            print('for {:d} clusters'.format(num_clusters), end=' ')
-            print('in {:.0f} seconds'.format(time_run))
-
-        # Fill mgnifam dictionary
-        time_run, (fasta_sequences, _) = benchmark(
-            fn=self.search_fasta_sequences,
-            sequences_acc=sequences_acc,
-            fasta_dataset=self.mgnifam,
-            client=client,
-            verbose=verbose
-        )
-
-        # Check fasta sequences
-        self.check_fasta_sequences(sequences_acc, fasta_sequences)
-
-        # Define number of sequences
-        num_sequences = len(fasta_sequences)
-
-        # Verbose log
-        if verbose:
-            print('Retrieved {:d} FASTA'.format(num_sequences), end=' ')
-            print('sequences in {:.0f} seconds'.format(time_run))
-
-        # Check compositional bias
-        time_run, (cluster_names, _) = benchmark(
-            fn=self.check_comp_bias,
-            clusters_path=clusters_path,
-            bias_path=bias_path,
-            cluster_members=cluster_members,
-            fasta_sequences=fasta_sequences,
-            client=client,
-            verbose=verbose
-        )
-
-        # Keep only clusters whose bias is below threshold
-        cluster_members = {
-            cluster_name: sequences_acc
-            for cluster_name, sequences_acc
-            in cluster_members.items()
-            if cluster_name in set(cluster_names)
-        }
-
-        # Verbose log
-        if verbose:
-            print('Compositional bias computed', end=' ')
-            print('for {:d} clusters'.format(len(cluster_members)), end=' ')
-            print('in {:.0f} seconds'.format(time_run))
-
-        # Make SEED alignments
-        time_run, _ = benchmark(
-            fn=self.make_seed_alignments,
-            cluster_members=cluster_members,
-            fasta_sequences=fasta_sequences,
-            clusters_path=clusters_path,
-            client=client,
-            verbose=verbose
-        )
-
-        # Verbose log
-        if verbose:
-            print('SEED sequence alignments generated', end=' ')
-            print('for {:d} clusters'.format(len(cluster_members)), end=' ')
-            print('in {:.0f} seconds'.format(time_run))
-
-        # Trim SEED alignments
-        time_run, cluster_names = benchmark(
-            fn=self.trim_seed_alignments,
-            cluster_names=set(cluster_members.keys()),
-            clusters_path=clusters_path,
-            noaln_path=noaln_path,
-            verbose=verbose
-        )
-
-        # Verbose log
-        if verbose:
-            print('SEED sequence alignments trimmed', end=' ')
-            print('for {:d} clusters'.format(len(cluster_names)), end=' ')
-            print('in {:.0f} seconds'.format(time_run))
-
-        # Make HMM models
-        time_run, cluster_names = benchmark(
-            fn=self.make_hmm_models,
-            cluster_names=cluster_names,
-            clusters_path=clusters_path,
-            client=client,
-            verbose=verbose
-        )
-
-        # Verbose log
-        if verbose:
-            print('HMM models done', end=' ')
-            print('for {:d} clusters'.format(len(cluster_names)), end=' ')
-            print('in {:.0f} seconds'.format(time_run))
-
-        # Check if UniProt shape hasn't been already set
-        if not (self.uniprot_height and self.uniprot_width):
-            # Retrieve UniProt size and it longest sequence length
-            time_run, (_, self.uniprot_width, self.uniprot_height) = benchmark(
-                fn=self.get_longest,
-                target_dataset=self.uniprot,
-                client=client
+            # Search for cluster members: make SEED.head.fa files
+            self.search_cluster_members(
+                clusters_path=clusters_path,
+                cluster_names=cluster_names,
+                client=client,
+                verbose=verbose
             )
-            # Verbose log
-            if verbose:
-                print('UniProt shape retrieved in {:.0f} seconds'.format(time_run))
-        # Define UniProt shape tuple
-        uniprot_shape = (self.uniprot_height, self.uniprot_width)
 
-        # Verbose log
-        if verbose:
-            print('UniProt dataset has shape', end=' ')
-            print('{:d} x {:d}'.format(*uniprot_shape))
-
-        # Check if MGnifam shape hasn't been already set
-        if not (self.mgnifam_height and self.mgnifam_width):
-            # Retrieve MGnifam size and it longest sequence length
-            time_run, (_, self.mgnifam_width, self.mgnifam_height) = benchmark(
-                fn=self.get_longest,
-                target_dataset=self.mgnifam,
-                client=client
+            # Search for fasta sequences: make SEED.fa files
+            self.search_fasta_sequences(
+                clusters_path=clusters_path,
+                client=client,
+                verbose=verbose
             )
-            # Verbose log
-            if verbose:
-                print('MGnifam shape retrieved in {:.0f} seconds'.format(time_run))
-        # Store uniprot shape
-        mgnifam_shape = (self.mgnifam_height, self.mgnifam_width)
 
-        # Verbose log
-        if verbose:
-            print('MGnifam dataset has shape', end=' ')
-            print('{:d} x {:d}'.format(*mgnifam_shape))
-
-        # Close previous client
-        self.close_client(cluster, client)
-
-        # Run search against UniProt sub-pipeline
-        self.search_hmm_uniprot(
-            clusters_path=clusters_path,
-            uniprot_path=uniprot_path,
-            uniprot_shape=uniprot_shape,
-            min_jobs=min_jobs,
-            max_jobs=max_jobs,
-            verbose=verbose
-        )
-
-        # Run search against MGnifam sub-pipeline
-        self.search_hmm_mgnifam(
-            clusters_path=clusters_path,
-            mgnifam_shape=mgnifam_shape,
-            min_jobs=min_jobs,
-            max_jobs=max_jobs,
-            verbose=verbose
-        )
+        # # Check cluster members
+        # self.check_cluster_members(cluster_names, cluster_members)
+        #
+        # # Initialize set of retrieved sequence accession numbers
+        # sequences_acc = set()
+        # # Loop through each cluster
+        # for members_acc in cluster_members.values():
+        #     # Update sequence accession numbers
+        #     sequences_acc |= set(members_acc)
+        #
+        # # Get number of clusters
+        # num_clusters = len(cluster_members)
+        # # Get number of sequences
+        # num_sequences = sum([len(c) for c in cluster_members.values()])
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('Retrieved {:d} accession numbers'.format(num_sequences), end=' ')
+        #     print('for {:d} clusters'.format(num_clusters), end=' ')
+        #     print('in {:.0f} seconds'.format(time_run))
+        #
+        # # Fill mgnifam dictionary
+        # time_run, (fasta_sequences, _) = benchmark(
+        #     fn=self.search_fasta_sequences,
+        #     sequences_acc=sequences_acc,
+        #     fasta_dataset=self.mgnifam,
+        #     client=client,
+        #     verbose=verbose
+        # )
+        #
+        # # Check fasta sequences
+        # self.check_fasta_sequences(sequences_acc, fasta_sequences)
+        #
+        # # Define number of sequences
+        # num_sequences = len(fasta_sequences)
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('Retrieved {:d} FASTA'.format(num_sequences), end=' ')
+        #     print('sequences in {:.0f} seconds'.format(time_run))
+        #
+        # # Check compositional bias
+        # time_run, (cluster_names, _) = benchmark(
+        #     fn=self.check_comp_bias,
+        #     clusters_path=clusters_path,
+        #     bias_path=bias_path,
+        #     cluster_members=cluster_members,
+        #     fasta_sequences=fasta_sequences,
+        #     client=client,
+        #     verbose=verbose
+        # )
+        #
+        # # Keep only clusters whose bias is below threshold
+        # cluster_members = {
+        #     cluster_name: sequences_acc
+        #     for cluster_name, sequences_acc
+        #     in cluster_members.items()
+        #     if cluster_name in set(cluster_names)
+        # }
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('Compositional bias computed', end=' ')
+        #     print('for {:d} clusters'.format(len(cluster_members)), end=' ')
+        #     print('in {:.0f} seconds'.format(time_run))
+        #
+        # # Make SEED alignments
+        # time_run, _ = benchmark(
+        #     fn=self.make_seed_alignments,
+        #     cluster_members=cluster_members,
+        #     fasta_sequences=fasta_sequences,
+        #     clusters_path=clusters_path,
+        #     client=client,
+        #     verbose=verbose
+        # )
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('SEED sequence alignments generated', end=' ')
+        #     print('for {:d} clusters'.format(len(cluster_members)), end=' ')
+        #     print('in {:.0f} seconds'.format(time_run))
+        #
+        # # Trim SEED alignments
+        # time_run, cluster_names = benchmark(
+        #     fn=self.trim_seed_alignments,
+        #     cluster_names=set(cluster_members.keys()),
+        #     clusters_path=clusters_path,
+        #     noaln_path=noaln_path,
+        #     verbose=verbose
+        # )
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('SEED sequence alignments trimmed', end=' ')
+        #     print('for {:d} clusters'.format(len(cluster_names)), end=' ')
+        #     print('in {:.0f} seconds'.format(time_run))
+        #
+        # # Make HMM models
+        # time_run, cluster_names = benchmark(
+        #     fn=self.make_hmm_models,
+        #     cluster_names=cluster_names,
+        #     clusters_path=clusters_path,
+        #     client=client,
+        #     verbose=verbose
+        # )
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('HMM models done', end=' ')
+        #     print('for {:d} clusters'.format(len(cluster_names)), end=' ')
+        #     print('in {:.0f} seconds'.format(time_run))
+        #
+        # # Check if UniProt shape hasn't been already set
+        # if not (self.uniprot_height and self.uniprot_width):
+        #     # Retrieve UniProt size and it longest sequence length
+        #     time_run, (_, self.uniprot_width, self.uniprot_height) = benchmark(
+        #         fn=self.get_longest,
+        #         target_dataset=self.uniprot,
+        #         client=client
+        #     )
+        #     # Verbose log
+        #     if verbose:
+        #         print('UniProt shape retrieved in {:.0f} seconds'.format(time_run))
+        # # Define UniProt shape tuple
+        # uniprot_shape = (self.uniprot_height, self.uniprot_width)
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('UniProt dataset has shape', end=' ')
+        #     print('{:d} x {:d}'.format(*uniprot_shape))
+        #
+        # # Check if MGnifam shape hasn't been already set
+        # if not (self.mgnifam_height and self.mgnifam_width):
+        #     # Retrieve MGnifam size and it longest sequence length
+        #     time_run, (_, self.mgnifam_width, self.mgnifam_height) = benchmark(
+        #         fn=self.get_longest,
+        #         target_dataset=self.mgnifam,
+        #         client=client
+        #     )
+        #     # Verbose log
+        #     if verbose:
+        #         print('MGnifam shape retrieved in {:.0f} seconds'.format(time_run))
+        # # Store uniprot shape
+        # mgnifam_shape = (self.mgnifam_height, self.mgnifam_width)
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('MGnifam dataset has shape', end=' ')
+        #     print('{:d} x {:d}'.format(*mgnifam_shape))
+        #
+        # # Close previous client
+        # self.close_client(cluster, client)
+        #
+        # # Run search against UniProt sub-pipeline
+        # self.search_hmm_uniprot(
+        #     clusters_path=clusters_path,
+        #     uniprot_path=uniprot_path,
+        #     uniprot_shape=uniprot_shape,
+        #     min_jobs=min_jobs,
+        #     max_jobs=max_jobs,
+        #     verbose=verbose
+        # )
+        #
+        # # Run search against MGnifam sub-pipeline
+        # self.search_hmm_mgnifam(
+        #     clusters_path=clusters_path,
+        #     mgnifam_shape=mgnifam_shape,
+        #     min_jobs=min_jobs,
+        #     max_jobs=max_jobs,
+        #     verbose=verbose
+        # )
 
         # Update timers
         time_end = time()
         time_tot = time_end - time_beg
 
-        # Define clusters path iterator
-        cluster_iter = glob(os.path.join(clusters_path, 'MGYP*'))
-        # Define cluster names
-        cluster_names = set(map(os.path.basename, cluster_iter))
-
-        # Verbose log
         if verbose:
-            print('Build pipeline done', end=' ')
-            print('for {:d} clusters'.format(len(cluster_names)), end=' ')
-            print('in {:.0f} seconds'.format(time_tot))
-
-        # Return time taken to run and set of cluster names
-        return time_tot, cluster_names
+            # Define clusters path iterator
+            cluster_iter = glob(os.path.join(clusters_path, 'MGYP*'))
+            # Define cluster names
+            cluster_names = set(map(os.path.basename, cluster_iter))
+            # Verbose ouptut
+            print('{:d} clusters'.format(len(cluster_names)), end=' ')
+            print('built in {:.0f} seconds'.format(time_tot))
 
     # Initialize sub-directories
     def init_subdir(self, clusters_path):
@@ -414,125 +415,253 @@ class Build(Pipeline):
         # Return both longest sequence and dataset length
         return longest_seq, longest_len, dataset_size
 
-    # Search for cluster members
-    def search_cluster_members(self, cluster_names, client, verbose=False):
-        """ Search for cluster member sequences
+    @staticmethod
+    def make_seed_head(linclust_chunk, clusters_path, cluster_names):
+        """ Make clusters SEED fasta header files
 
         Args
-        cluster_names (set)         Set of cluster names to search against
-                                    LinClust dataset
-        client (Client)             Dask Client used to schedule jobs
-        verbose (bool)              Whether to print verbose log or not
-
-        Return
-        (dict)                      Mapping cluster names (keys) to set of
-                                    sequence accession numbers (values)
+        linclust_chunk (Dataset.LinClust)   LinClust dataset to search against
+        clusters_path (str)                 Path to clusters root folder
+        cluster_names (set)                 Set of cluster names to search
         """
-        # Verbose log
+        # Retrieve dictionary mapping cluster names to sequences accessions
+        cluster_members = linclust_chunk.search(cluster_names)
+        # Loop through each cluster name
+        for cluster_name in cluster_members:
+            # Define cluster path
+            cluster_path = os.path.join(clusters_path, cluster_name)
+            # Ensure directory exists
+            os.makedirs(cluster_path, exist_ok=True)
+
+            # Define path to FASTA headers file
+            head_path = os.path.join(cluster_path, 'SEED.head.fa')
+            # Define list of sequences accession numbers
+            sequences_acc = cluster_members[cluster_name]
+            # Open cluster path
+            with open(head_path, 'a+') as file:
+                # Fill FASTA file with retrieved sequences accession numbers
+                for accession in sequences_acc:
+                    # Write new line to file
+                    file.write('>' + accession + '\n')
+
+    @staticmethod
+    def make_seed_fasta(mgnifam_chunk, clusters_path, sequences_acc):
+        """ Make clusters SEED fasta files
+
+        Args
+        mgnifam_chunk (Dataset.Fasta)       MGnifam fataset to search against
+        clusters_path (str)                 Path to clusters root folder
+        sequences_acc (dict)                Dictionary mapping sequences
+                                            accession numbers to cluster names
+        """
+        # Retrieve sequence accession (keys only)
+        accessions = [*sequences_acc.keys()]
+        # Search for sequences accession numbers
+        fasta_sequences = mgnifam_chunk.search(accessions)
+        # Loop through all sequence accession
+        for accession in accessions:
+
+
+            # Case sequence accession is not among the retrieved ones
+            if accession not in set(fasta_sequences.keys()):
+                # Skip iteration
+                continue
+
+            # Retrieve fasta entry
+            fasta_entry = fasta_sequences[accession]
+            # Get cluster names
+            cluster_names = sequences_acc[accession]
+            # Loop through each cluster names
+            for cluster_name in cluster_names:
+                # Define current cluster path
+                cluster_path = os.path.join(clusters_path, cluster_name)
+                # Define fasta file path
+                fasta_path = os.path.join(cluster_path, 'SEED.fa')
+                # Open FASTA file
+                with open(fasta_path, 'a+') as file:
+                    # Append fasta entry to file
+                    file.write(fasta_entry + '\n')
+
+    # Search for cluster members
+    def search_cluster_members(self, clusters_path, cluster_names, client, verbose=False):
+        """ Search for cluster member sequences
+
+        This method queries the LinClust dataset in order to retrieve sequence
+        accession numbers whic are members of the cluster, identified by given
+        names. Sequences accession number are stored in a FASTA file inside
+        cluster directory (only FASTA headers!)
+
+        Args
+        clusters_path (str)         Path to clusters sub-folders to directory
+        cluster_names (iterable)    Iterator through of cluster names
+        client (Dask.Client)        Dask Client used to schedule jobs
+        verbose (bool)              Whether to print verbose log or not
+        """
+        # Initailize timers
+        time_beg, time_end = time(), 0.0
+        # Define set of cluster names
+        cluster_names = set(cluster_names)
+        # Verbose
         if verbose:
-            print('Searching member sequences', end=' ')
-            print('for {:d} clusters'.format(len(cluster_names)))
+            print('Searching member sequences for', end=' ')
+            print('{:d} clusters...'.format(len(cluster_names)), end='')
 
         # Initialize futures
         futures = list()
         # Go through each LinClust dataset chunk
-        for chunk in self.linclust:
+        for chunk in self.linclust_chunks:
             # Submit search function to client
-            future = client.submit(chunk.search, cluster_names=cluster_names)
+            future = client.submit(
+                func=self.make_seed_head,
+                linclust_chunk=chunk,
+                clusters_path=clusters_path,
+                cluster_names=cluster_names
+            )
             # Store future
             futures.append(future)
 
-        # Retrieve distributed computation results
-        results = client.gather(futures)
+        # Wait for computation results
+        client.gather(futures)
+        # Update timers
+        time_end = time()
 
-        # Initialize cluster members dictionary (output)
-        cluster_members = dict()
-        # Loop through resulting clusters dictionaries
-        for i in range(len(results)):
-            # Loop through every cluster name in result dictionary
-            for cluster_name in results[i].keys():
-                # Initialize entry for current cluster
-                cluster_members.setdefault(cluster_name, set())
-                # Update cluster members list
-                cluster_members[cluster_name] |= set(results[i][cluster_name])
+        # # Initialize cluster members dictionary (output)
+        # cluster_members = dict()
+        # # Loop through resulting clusters dictionaries
+        # for i in range(len(results)):
+        #     # Loop through every cluster name in result dictionary
+        #     for cluster_name in results[i].keys():
+        #         # Initialize entry for current cluster
+        #         cluster_members.setdefault(cluster_name, set())
+        #         # Update cluster members list
+        #         cluster_members[cluster_name] |= set(results[i][cluster_name])
 
-        # Verbose log
+        # Verbose
         if verbose:
-            print('Retrieved sequences', end=' ')
-            print('for {:d} clusters'.format(len(cluster_members)))
+            print('done in {:.0f} seconds'.format(time_end -time_beg))
 
-        # Return cluster members
-        return cluster_members
-
-    # Check cluster members found
-    def check_cluster_members(self, cluster_names, cluster_members):
-        # Check that cluster members keys are the same as cluster names
-        if set(cluster_names) != set(cluster_members.keys()):
-            # Raise new exception and interupt execution
-            raise KeyError(' '.join([
-                'Error: cluster members have not been retrieved for',
-                'all the {:d} input clusters: '.format(len(cluster_names)),
-                'aborting pipeline execution'
-            ]))
+    # # Check cluster members found
+    # def check_cluster_members(self, cluster_names, cluster_members):
+    #     # Check that cluster members keys are the same as cluster names
+    #     if set(cluster_names) != set(cluster_members.keys()):
+    #         # Raise new exception and interupt execution
+    #         raise KeyError(' '.join([
+    #             'Error: cluster members have not been retrieved for',
+    #             'all the {:d} input clusters: '.format(len(cluster_names)),
+    #             'aborting pipeline execution'
+    #         ]))
 
     # Search for fasta sequences
-    def search_fasta_sequences(self, sequences_acc, fasta_dataset, client, verbose=False):
+    def search_fasta_sequences(self, clusters_path, client, verbose=False):
         """ Retrieve fasra sequences from a Fasta dataset
 
         Args
-        sequences_acc (set)         Set of sequence accession numbers to search
-                                    for against given target FASTA dataset
-        fasta_dataset (Dataset)     Target FASTA dataset instance, whose search
-                                    method will be used in order to find
-                                    FASTA entries associated to given
-                                    accession numbers
-        client (Client)             Dask Client used to schedule jobs
+        clusters_path (str)         Path where all clusters can be found
+        client (Dask.Client)        Dask Client used to schedule jobs
         verbose (bool)              Whether to print verbose log or not
 
-        Return
-        (dict)                      Dictionary mapping sequence accession
-                                    numbers (keys) to list of fasta entries
-                                    (values)
-        (int)                       Total length of input FASTA dataset
+        Raise
+        (OSError)                   In case it was not possible to open SEED.fa
         """
-        # Verbose log
-        if verbose:
-            print('Searching {:d}'.format(len(sequences_acc)), end=' ')
-            print('FASTA sequences')
+        # Initailize timers
+        time_beg, time_end = time(), 0.0
 
-        # Initialize futures
+        # Initialize dict mapping sequence accession to cluster names
+        sequences_acc = dict()
+        # Define list of cluster paths
+        clusters_iter = glob(os.path.join(clusters_path, 'MGYP*'))
+        # Loop through each cluster
+        for cluster_path in clusters_iter:
+            # # DEBUG
+            # print('Cluster path:', cluster_path)
+            # Define cluster name
+            cluster_name = os.path.basename(cluster_path)
+
+            # Define fasta headers file path
+            head_path = os.path.join(cluster_path, 'SEED.head.fa')
+            # Open fasta file
+            with open(head_path, 'r') as file:
+                # Iterate fasta file (extract sequence only accession)
+                for entry in fasta_iter(file):
+                    # # DEBUG
+                    # print('Fasta entry:')
+                    # print(entry)
+                    # Get header from file
+                    header, _, = tuple(entry.split('\n'))
+                    # Retrieve sequence accession number
+                    accession = re.search('>(\S+)', header).group(1)
+                    # Initialize accession into sequences dictionary
+                    sequences_acc.setdefault(accession, list())
+                    # Append current cluster name to sequences dictionary
+                    sequences_acc[accession] += [cluster_name]
+
+        # Verbose
+        if verbose:
+            print('Searching %d sequences for' % len(sequences_acc), end=' ')
+            print('%d clusters against MGnifam...' % len(clusters_iter), end='')
+
+        # Initialize distributed futures for making SEED.fa
         futures = list()
-        # Loop through each chunk in given FASTA dataset
-        for chunk in fasta_dataset:
-            # Submit search function against FASTA dataset
-            future = client.submit(chunk.search, sequences_acc, ret_length=True)
-            # Save future
+        # Loop through each MGnifam chunk
+        for chunk in self.mgnifam_chunks:
+            # Submit SEED.fa making function
+            future = client.submit(
+                func=self.make_seed_fasta,
+                clusters_path=clusters_path,
+                sequences_acc=sequences_acc,
+                mgnifam_chunk=chunk
+            )
+            # Save futures
             futures.append(future)
 
-        # Gather results
-        results = client.gather(futures)
+        # Wait for futures results
+        client.gather(futures)
+        # Update timers
+        time_end = time()
 
-        # Initialize FASTA sequences dict(sequence accession: fasta entry)
-        fasta_sequences = dict()
-        # Initialize length of FASTA file
-        fasta_length = 0
-        # Go through each result
-        for i in range(len(results)):
-            # Retrieve either chunk sequences dict and chunk length
-            chunk_sequences, chunk_length = results[i]
-            # Update cluster sequences dictionary
-            for sequence_acc in chunk_sequences:
-                fasta_sequences[sequence_acc] = chunk_sequences[sequence_acc]
-            # Update length of FASTA file
-            fasta_length = fasta_length + chunk_length
-
-        # Verbose log
+        # Verbose
         if verbose:
-            print('Retrieved {:d} fasta'.format(len(fasta_sequences)), end=' ')
-            print('entries from dataset of size {}'.format(fasta_length))
+            print('done in {:.0f} seconds'.format(time_end - time_beg))
 
-        # Return either the sequences dictionary and the dataset length
-        return fasta_sequences, fasta_length
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('Searching {:d}'.format(len(sequences_acc)), end=' ')
+        #     print('FASTA sequences')
+        #
+        # # Initialize futures
+        # futures = list()
+        # # Loop through each chunk in given FASTA dataset
+        # for chunk in fasta_dataset:
+        #     # Submit search function against FASTA dataset
+        #     future = client.submit(chunk.search, sequences_acc, ret_length=True)
+        #     # Save future
+        #     futures.append(future)
+        #
+        # # Gather results
+        # results = client.gather(futures)
+        #
+        # # Initialize FASTA sequences dict(sequence accession: fasta entry)
+        # fasta_sequences = dict()
+        # # Initialize length of FASTA file
+        # fasta_length = 0
+        # # Go through each result
+        # for i in range(len(results)):
+        #     # Retrieve either chunk sequences dict and chunk length
+        #     chunk_sequences, chunk_length = results[i]
+        #     # Update cluster sequences dictionary
+        #     for sequence_acc in chunk_sequences:
+        #         fasta_sequences[sequence_acc] = chunk_sequences[sequence_acc]
+        #     # Update length of FASTA file
+        #     fasta_length = fasta_length + chunk_length
+        #
+        # # Verbose log
+        # if verbose:
+        #     print('Retrieved {:d} fasta'.format(len(fasta_sequences)), end=' ')
+        #     print('entries from dataset of size {}'.format(fasta_length))
+        #
+        # # Return either the sequences dictionary and the dataset length
+        # return fasta_sequences, fasta_length
 
     # Check fasta sequences found
     def check_fasta_sequences(self, sequences_acc, fasta_sequences):
@@ -1814,20 +1943,25 @@ def get_cluster_names(paths, shuffle=False):
     cluster_names = list()
     # Loop through each input path
     for i in range(len(paths)):
+        # Check if input file exists
+        if not os.path.isfile(paths[i]):
+            # Raise exception
+            raise FileNotFoundError(' '.join([
+                'could not open input file',
+                'at %s: file not found' % paths[i]
+            ]))
+
         # Open file
-        file = open(paths[i], 'r')
-        # Iterate through each file line
-        for line in file:
-            # Check if current line matches expected format
-            match = re.search(r'^(\S+)', line)
-            # Case current line does not match expected format
-            if not match:
-                # Skip line, go to next iteration
-                continue
-            # Otherwise, store cluster name
-            cluster_names.append(match.group(1))
-        # Close file
-        file.close()
+        with open(paths[i], 'r') as file:
+            # Iterate through each file line
+            for line in file:
+                # Check if current line matches expected format
+                match = re.search(r'^(\S+)', line)
+                # Case current line does matches expected format
+                if match:
+                    # Store current cluster name
+                    cluster_names.append(match.group(1))
+
     # Check if shuffle is active
     if shuffle:
         # Shuffle output list before returning it
@@ -1836,58 +1970,386 @@ def get_cluster_names(paths, shuffle=False):
     return cluster_names
 
 
-# Test
+# Utility: get environmental variables
+def parse_env_json(path):
+    # Case environment .json file path does not exist
+    if not os.path.isfile(path):
+        # Raise error
+        raise FileNotFoundError(' '.join([
+            'could not open environmental variables file',
+            'at %s: file not found'.format(path)
+        ]))
+
+    # Initialize environmental variables dictionary
+    env = dict()
+    # Open environmental variables file
+    with open(path, 'r') as file:
+        # Load variables dictionary from file
+        env = json.load(file)
+        # Loop through every key in retrieved dictionary
+        for key, value in env.items():
+            # Case calue is not a list
+            if isinstance(value, list):
+                # Join list as string, using double dots as separators
+                env[key] = ':'.join(value)
+
+    # Return environmental variables dictionary
+    return env
+
+
+# Run batch pipeline
 if __name__ == '__main__':
 
-    # Define root path
+    # Define project root path
     ROOT_PATH = os.path.dirname(__file__) + '/../..'
+    # Define path to data folder
+    DATA_PATH = ROOT_PATH + '/data'
+    # Define path to LinClust file(s)
+    LINCLUST_PATH = DATA_PATH + '/clusters/chunk*.tsv.gz'
+    # Define path to MGnifam file(s)
+    MGNIFAM_PATH = DATA_PATH + '/mgnify/chunk*.fa.gz'
+    # Define path to UniProt file(s)
+    UNIPROT_PATH = DATA_PATH + '/uniprot/chunk*.fa.gz'
 
-    # Initialize scores
-    scores = list()
-    # Define TBLOUT iterator
-    tblout_iter = glob(ROOT_PATH + '/tmp/release2/batches/0/MGYP*/*.domtblout')
-    # # DEBUG
-    # print(tblout_iter)
-    # Go through all sample tblout paths
-    for i, tblout_path in enumerate(tblout_iter):
-        # Retrieve scores
-        scores.append(Build.parse_search_scores(
-            tblout_path=tblout_path,
-            tblout_type='domains',
-            e_value=0.001,
-            min_bits=25.0,
-            max_bits=999999.99
-        ))
-        # # Print scores
-        # print('{:d}-th scores:\n'.format(i+1), scores[-1])
-        # print()
-    # Merge scores together
-    scores = merge_scores(*scores)
+    # Argparse
+    parser = argparse.ArgumentParser(description='Build MGnifam clusters')
+    # Define input path(s)
+    parser.add_argument(
+        '-i', '--in_path', nargs='+', type=str, required=True,
+        help='Path to input .tsv file(s), ccluster name is first column'
+    )
+    # Define output path
+    parser.add_argument(
+        '-o', '--out_path', type=str, required=True,
+        help='Path to output directory'
+    )
+    # Define author name
+    parser.add_argument(
+        '-a', '--author_name', type=str, default='Anonymous',
+        help='Name of the user running MGnifam build pipeline'
+    )
+    # Wether to shuffle input or not
+    parser.add_argument(
+        '--shuffle', type=int, default=0,
+        help='Whether to shuffle input cluster names or not'
+    )
+    # Define batch size
+    parser.add_argument(
+        '--batch_size', type=int, default=100,
+        help='Number of clusters to make at each iteration'
+    )
+    # Define maximum number of clusters to make
+    parser.add_argument(
+        '--max_clusters', type=int, default=0,
+        help='Maximum number of clusters to make'
+    )
+    # Define path to LinClust clusters file(s)
+    parser.add_argument(
+        '--linclust_path', nargs='+', type=str, default=glob(LINCLUST_PATH),
+        help='Path to LinClust clusters file(s)'
+    )
+    # Define path to MGnifam file(s)
+    parser.add_argument(
+        '--mgnifam_path', nargs='+', type=str, default=glob(MGNIFAM_PATH),
+        help='Path to MGnifam file(s)'
+    )
+    # Define MGnifam width (maximum sequence length)
+    parser.add_argument(
+        '--mgnifam_width', type=int, required=False,
+        help='Maximum sequence length in MGnifam dataset'
+    )
+    # Define MGnifam height (total number of sequences)
+    parser.add_argument(
+        '--mgnifam_height', type=int, required=False,
+        help='Total number of sequences in MGnifam dataset'
+    )
+    # Define path to UniProt file(s)
+    parser.add_argument(
+        '--uniprot_path', nargs='+', type=str, default=glob(UNIPROT_PATH),
+        help='Path to UniProt file(s)'
+    )
+    # Define UniProt width (maximum sequence length)
+    parser.add_argument(
+        '--uniprot_width', type=int, required=False,
+        help='Maximum sequence length in UniProt dataset'
+    )
+    # Define UniProt height (total number of sequences)
+    parser.add_argument(
+        '--uniprot_height', type=int, required=False,
+        help='Total number of sequences in UniProt dataset'
+    )
+    # Define MobiDB executable
+    parser.add_argument(
+        '--mobidb_cmd', nargs='+', type=str, default=['mobidb_lite.py'],
+        help='MobiDB Lite disorder predictor executable'
+    )
+    # Define Muscle executable
+    parser.add_argument(
+        '--muscle_cmd', nargs='+', type=str, default=['muscle'],
+        help='Muscle multiple sequence aligner executable'
+    )
+    # Define hmmsearch executable
+    parser.add_argument(
+        '--hmmsearch_cmd', nargs='+', type=str, default=['hmmsearch'],
+        help='HMMER3 search executable'
+    )
+    # Define hmmbuild executable
+    parser.add_argument(
+        '--hmmbuild_cmd', nargs='+', type=str, default=['hmmbuild'],
+        help='HMMER3 build executable'
+    )
+    # Define hmmalign executable
+    parser.add_argument(
+        '--hmmalign_cmd', nargs='+', type=str, default=['hmmalign'],
+        help='HMMER3 align executable'
+    )
+    # Whether to print verbose output
+    parser.add_argument(
+        '-v', '--verbose', type=int, default=1,
+        help='Print verbose output'
+    )
+    # Define E-value significance threshold for both UniProt and MGnifam
+    parser.add_argument(
+        '-e', '--e_value', type=float, default=0.01,
+        help='E-value threhsold for both UniProt and MGnifam comparisons'
+    )
+    # Define environmental variables .json file
+    parser.add_argument(
+        '--env_path', type=str, required=False,
+        help='Path to .json file holding environmental variables'
+    )
+    # Define scheduler options
+    group = parser.add_argument_group('Scheduler options')
+    # Define schduler type
+    group.add_argument(
+        '-s', '--scheduler_type', type=str, default='LSF',
+        help='Type of scheduler to use to distribute parallel processes'
+    )
+    # Define minimum number of jobs
+    group.add_argument(
+        '-j', '--min_jobs', type=int, default=0,
+        help='Minimum number of parallel processes to keep alive'
+    )
+    # Define maximum number of jobs
+    group.add_argument(
+        '-J', '--max_jobs', type=int, default=100,
+        help='Maximum number of parallel processes to keep alive'
+    )
+    # Define minimum number of cores
+    group.add_argument(
+        '-c', '--min_cores', type=int, default=1,
+        help='Minimum number of cores to use per process'
+    )
+    # Define maximum number of cores
+    group.add_argument(
+        '-C', '--max_cores', type=int, default=1,
+        help='Maximum number of cores to use per process'
+    )
+    # Define minimum memory allocable per job
+    group.add_argument(
+        '-m', '--min_memory', type=str, default='1 GB',
+        help='Minimum memory allocable per process'
+    )
+    # Define maximum memory allocable per job
+    group.add_argument(
+        '-M', '--max_memory', type=str, default='1 GB',
+        help='Maximum memory allocable per process'
+    )
+    # Retrieve arguments
+    args = parser.parse_args()
 
-    # Show results
-    print('Scores:')
-    for cluster_name, cluster_score in scores.items():
-        print(cluster_name, cluster_score)
-    print()
+    # Initialize scheduler
+    scheduler = None
+    # Case scheduler type is LSF
+    if args.scheduler_type == 'LSF':
+        # Define LSF scheduler
+        scheduler = LSFScheduler(
+            # Define cores boundaries
+            min_cores=args.min_cores,
+            max_cores=args.max_cores,
+            # Define memory boundaries
+            min_memory=args.min_memory,
+            max_memory=args.max_memory,
+            # Define processes per job
+            processes=1
+        )
+    # Case scheduler type is Local
+    if args.scheduler_type == 'Local':
+        # Define Local scheduler
+        scheduler = LocalScheduler(
+            # Define cores boundaries
+            min_cores=args.min_cores,
+            max_cores=args.max_cores,
+            # Define memory boundaries
+            min_memory=args.min_memory,
+            max_memory=args.max_memory,
+            # Define processes per job
+            threads_per_worker=1
+        )
+    # Case no scheduler has been set
+    if scheduler is None:
+        # Raise new error
+        raise ValueError(' '.join([
+            'scheduler type can be one among `Local` or `LSF`',
+            '%s has been chosen instead' % args.scheduler_type
+        ]))
 
-    # Initialize hits
-    hits = list()
-    # Go through all sample tblout paths
-    for tblout_path in tblout_iter:
-        # Retrieve hits
-        hits.append(Build.parse_search_hits(
-            tblout_path=tblout_path,
-            tblout_type='domains',
-            scores=scores
-        ))
-        # # Print latest retrieved hits
-        # print('{:d}-th hits\n'.format(), hits[-1])
-        # print()
-    # Merge hits together
-    hits = merge_hits(*hits)
+    # Get cluster names list
+    cluster_names = get_cluster_names(
+        paths=args.in_path,
+        shuffle=args.shuffle
+    )
 
-    # Show results
-    print('Hits:')
-    for cluster_name, cluster_members in hits.items():
-        print(cluster_name, cluster_members)
-    print()
+    # Load environmental variables
+    env = os.environ.copy()
+    # Case environmental variable file is set
+    if args.env_path:
+        # Update environmental variables using given file file
+        env = {**env, **parse_env_json(args.env_path)}
+
+    # Try making release directory
+    try:
+        # Case output directory does not exist
+        if not os.path.isdir(args.out_path):
+            # Make output directory
+            os.mkdir(args.out_path)
+
+    except OSError:
+        # Raise new error
+        raise OSError(' '.join([
+            'could not create output directory',
+            'at %s:' % args.out_path,
+            'permission denied'
+        ]))
+
+    # Load dataset chunks
+    linclust_chunks = LinClust.from_list(args.linclust_path)
+    mgnifam_chunks = Fasta.from_list(args.mgnifam_path)
+    uniprot_chunks = Fasta.from_list(args.uniprot_path)
+
+    # Define new build pipeline
+    build = Build(
+        # Set scheduler
+        scheduler=scheduler,
+        # Path to datasets (fixed)
+        linclust_chunks=linclust_chunks,
+        mgnifam_chunks=mgnifam_chunks,
+        uniprot_chunks=uniprot_chunks,
+        # Compositional bias threshold settings
+        comp_bias_threshold=0.2, comp_bias_inclusive=True,
+        # Automatic trimming settings
+        trim_threshold=0.4, trim_inclusive=True,
+        filter_threshold=0.5, filter_inclusive=True,
+        # Post trimming settings
+        seed_min_width=1, seed_min_height=1,
+        # Search against UniProt settings
+        uniprot_e_value=args.e_value,
+        uniprot_height=args.uniprot_height,
+        uniprot_width=args.uniprot_width,
+        # Search against MGnifam settings
+        mgnifam_e_value=args.e_value,
+        mgnifam_height=args.mgnifam_height,
+        mgnifam_width=args.mgnifam_width,
+        # Command line arguments
+        mobidb_cmd=args.mobidb_cmd,  # Path to MobiDB Lite predictor
+        muscle_cmd=args.muscle_cmd,  # Path to Muscle alignment algorithm
+        hmmbuild_cmd=args.hmmbuild_cmd,  # Path to hmmbuild script
+        hmmsearch_cmd=args.hmmsearch_cmd,  # Path to hmmsearch script
+        hmmalign_cmd=args.hmmalign_cmd,  # Path to hmmalign script
+        # Environmental variables
+        env=env
+    )
+
+    # Define number of clusters
+    num_clusters = len(cluster_names)
+    # Threshold number of clusters
+    num_clusters = min(num_clusters, args.max_clusters)
+    # Define batchs size
+    batch_size = args.batch_size
+    # Loop through batches of input cluster names
+    for i in range(0, num_clusters, batch_size):
+        # Define last index of current batch (excluded)
+        j = min(num_clusters, i + batch_size)
+        # Define batch index
+        batch_index = str(i // batch_size)
+        # Define directory for current batch
+        batch_path = os.path.join(args.out_path, 'batch', batch_index)
+
+        # Try making output directory
+        try:
+            # Make directory for current batch
+            os.makedirs(batch_path, exist_ok=True)
+
+        # Intercept exception
+        except OSError:
+            # Raise exception
+            raise OSError(' '.join([
+                'could not make batch directory',
+                'at %s:'.format(batch_path),
+                'permission denied'
+            ]))
+
+        # Define batch of cluster names
+        batch_names = cluster_names[i:j]
+        # Run pipeline for current batch of cluster names
+        build(
+            author_name=args.author_name,
+            cluster_names=batch_names,
+            clusters_path=batch_path,
+            min_jobs=args.min_jobs,
+            max_jobs=args.max_jobs,
+            verbose=bool(args.verbose)
+        )
+
+    # # Define root path
+    # ROOT_PATH = os.path.dirname(__file__) + '/../..'
+    #
+    # # Initialize scores
+    # scores = list()
+    # # Define TBLOUT iterator
+    # tblout_iter = glob(ROOT_PATH + '/tmp/release2/batches/0/MGYP*/*.domtblout')
+    # # # DEBUG
+    # # print(tblout_iter)
+    # # Go through all sample tblout paths
+    # for i, tblout_path in enumerate(tblout_iter):
+    #     # Retrieve scores
+    #     scores.append(Build.parse_search_scores(
+    #         tblout_path=tblout_path,
+    #         tblout_type='domains',
+    #         e_value=0.001,
+    #         min_bits=25.0,
+    #         max_bits=999999.99
+    #     ))
+    #     # # Print scores
+    #     # print('{:d}-th scores:\n'.format(i+1), scores[-1])
+    #     # print()
+    # # Merge scores together
+    # scores = merge_scores(*scores)
+    #
+    # # Show results
+    # print('Scores:')
+    # for cluster_name, cluster_score in scores.items():
+    #     print(cluster_name, cluster_score)
+    # print()
+    #
+    # # Initialize hits
+    # hits = list()
+    # # Go through all sample tblout paths
+    # for tblout_path in tblout_iter:
+    #     # Retrieve hits
+    #     hits.append(Build.parse_search_hits(
+    #         tblout_path=tblout_path,
+    #         tblout_type='domains',
+    #         scores=scores
+    #     ))
+    #     # # Print latest retrieved hits
+    #     # print('{:d}-th hits\n'.format(), hits[-1])
+    #     # print()
+    # # Merge hits together
+    # hits = merge_hits(*hits)
+    #
+    # # Show results
+    # print('Hits:')
+    # for cluster_name, cluster_members in hits.items():
+    #     print(cluster_name, cluster_members)
+    # print()

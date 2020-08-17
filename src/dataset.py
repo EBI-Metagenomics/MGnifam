@@ -283,15 +283,11 @@ class LinClust(Dataset):
         # Open dataset file
         with open_file(self.path) as file:
             # Define iterator
-            line_iterator = tqdm(
-                file,  # File line iterator
-                disable=(not verbose),  # Set verbose
-                file=sys.stdout  # Force printing to stdout
-            )
+            line_iterator = tqdm(file, disable=(not verbose), file=sys.stdout)
             # Loop through every line in file
             for line in line_iterator:
                 # Match cluster name and sequence accession
-                match = re.search(r'^([a-zA-Z0-9]+)[ \t]+([a-zA-Z0-9]+)', line)
+                match = re.search(r'^([a-zA-Z0-9]+)\s+([a-zA-Z0-9]+)', line)
                 # Case the line format does not match
                 if not match:
                     continue  # Skip iteration

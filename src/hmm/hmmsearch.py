@@ -131,313 +131,262 @@ class HMMSearch(HMMER):
         return 0
 
 
-# Utility: merge scores dictionary
-def merge_scores(*args):
-    # Initialize scores dict(query name: (TC, NC, GA))
-    scores = dict()
-    # Loop through each given score dictionary
-    for i in range(len(args)):
-        # Loop through every query name in current scores dict
-        for query_name in args[i]:
-
-            # Retrieve previous score tuple
-            prev_score = scores.setdefault(query_name, args[i][query_name])
-            # Retrieve previous TC, NC, GA
-            prev_tc, prev_nc, prev_ga = prev_score
-
-            # Retrieve current TC, NC, GA
-            curr_tc, curr_nc, curr_ga = args[i][query_name]
-
-            # Set new TC: minimum between current and previous
-            curr_tc = max(curr_tc, prev_tc)
-            # Set new NC: maximum between current and previous
-            curr_nc = min(curr_nc, prev_nc)
-            # Ensure that current NC is not higher than current TC
-            curr_nc = min(curr_tc, curr_nc)
-            # Compute new gathering threshold (GA)
-            curr_ga = min(25.0, curr_nc + ((curr_tc - curr_nc) / 2))
-
-            # Store new triple (TC, NC, GA)
-            scores[query_name] = (curr_tc, curr_nc, curr_ga)
-
-    # Return merged scores dictionary
-    return scores
-
-
-# Utility: merge hits dictionary
-def merge_hits(*args):
-    # Initialize hits dict(query name: set of target names)
-    hits = dict()
-    # Loop through each given hit dictionary
-    for i in range(len(args)):
-        # Loop through every query name in current dictionary
-        for query_name in args[i]:
-            # Loop through each target name for current query name
-            for target_name in args[i][query_name]:
-                # Store current query name
-                hits.setdefault(query_name, set())
-                # Store current target name
-                hits[query_name].add(target_name)
-    # Return merged hits dictionary
-    return hits
-
-
-# unit testing
-if __name__ == '__main__':
-
-    # Define path to root
-    ROOT_PATH = os.path.join(os.path.dirname(__file__), '..', '..')
-    # Define path to example clusters
-    EXAMPLES_PATH = os.path.join(ROOT_PATH, 'tmp', 'examples', 'MGYP*')
-    # Define path to UniProt dataset
-    UNIPROT_PATH = os.path.join(ROOT_PATH, 'data_', 'uniprot', 'chunk*.fa.gz')
-    # Define path to MGnifam dataset
-    MGNIFAM_PATH = os.path.join(ROOT_PATH, 'data_', 'mgnify', 'chunk*.fa.gz')
-
-    # Define model length
-    model_len = 1000
-    # Define longest sequence length
-    longest_len = 4e04
-    # Define maximum allowed memory per job
-    max_memory = 8e09
-    # Compute required memory per CPU
-    req_memory = HMMSearch.get_memory(model_len, longest_len)
-    # Compute maximum number of cores
-    print(' '.join([
-        'Memory required for a model of length {:d}'.format(model_len),
-        'with a maximum sequence length of {:d}'.format(int(longest_len)),
-        'is {:.2f} GB\n'.format(req_memory / 1e09)
-    ]))
-
-    # Compute max number of CPU with allowed memory 8 GB
-    num_cpus = HMMSearch.get_cpus(max_memory=max_memory, model_len=model_len,
-                                  max_cpus=8, longest_seq=longest_len)
-    # Show retrieved number of CPUs
-    print(' '.join([
-        'Maximum number of CPUs allowed with maximum',
-        'memory per job {:.2f} GB'.format(max_memory / 1e09),
-        'is {:d}\n'.format(num_cpus)
-    ]))
-
-    # Define new UniProt dataset
-    uniprot = Fasta.from_str(UNIPROT_PATH)
-
-    # Get first chunk in UniProt dataset
-    chunk = uniprot[0]
-    # Get longest sequence in chunk
-    longest_seq, longest_len, chunk_size = chunk.get_longest()
-    # Print longest sequence and chunk size
-    print('Longest sequence found is of size {:d},'.format(longest_len), end=' ')
-    print('found among other {:d} sequences'.format(chunk_size))
-    print()
-
-    # Retrieve first example cluster
-    cluster_path = next(iglob(EXAMPLES_PATH))
-    # Get chosen cluster name
-    cluster_name = os.path.basename(cluster_path)
-    # Show which cluster has been chosen
-    print('Chosen cluster is {:s} at {:s}'.format(cluster_name, cluster_path))
-    print()
-
-    # Initailize tblout and domtblout files
-    tblout_path = tempfile.NamedTemporaryFile(delete=False, suffix='.tblout').name
-    domtblout_path = tempfile.NamedTemporaryFile(delete=False, suffix='.domtblout').name
-
-    # Define new MGnifam dataset
-    mgnifam = Fasta.from_str(MGNIFAM_PATH)
-    # Define MGnifam dataset chunk
-    chunk = mgnifam[0]
-
-    # Retrieve HMM from given cluster
-    hmm_path = os.path.join(cluster_path, 'HMM')
-    # Retrieve first chunk of UniProt
-    chunk_path = chunk.path
-    # Initialize new hmmsearch script
-    hmm_search = HMMSearch()
-    # Search HMM against first UniProt chunk
-    hmm_search.run(
-        hmm_path=hmm_path,
-        target_path=chunk_path,
-        tblout_path=tblout_path,
-        domtblout_path=domtblout_path,
-        seq_e=1e03,
-        seq_z=900000,
-        num_cpus=1
-    )
-
-    # Print output paths
-    print('Files retrieved from HMMSEARCH:')
-    print('  {:s}'.format(tblout_path))
-    print('  {:s}'.format(domtblout_path))
-    print()
-
-    # Open TBLOUT file
-    tblout = Tblout(tblout_path)
-    # Print TBLOUT
-    print('Tblout:')
-    for row in tblout.table:
-        print(row)
-
-    # Open DOMTBLOUT file
-    domtblout = Domtblout(domtblout_path)
-    # Print DOMTBLOUT
-    print('Domtblout:')
-    for row in domtblout.table:
-        print(row)
-
-    # Remove either TBLOUT and DOMTBLOUT files
-    os.remove(tblout_path)
-    os.remove(domtblout_path)
-
-    # # Test iterator for tblout (sequences)
-    # print('Retrieved tblout rows (sequence hits):')
-    # # Open tblout file
-    # with open(tblout_path, 'r') as tblout_file:
-    #     # Define tblout iterator
-    #     tblout_iter = Hits.iterator(tblout_file)
-    #     # Loop through each row
-    #     for i, row in enumerate(tblout_iter):
-    #         # Print first three rows only
-    #         if i > 3:
-    #             continue
-    #         # Print row
-    #         print(row)
-    #     # Print number of non printed hits
-    #     print('...and {:d} other'.format(i - 3))
-    #     print()
-    #
-    # # Test iterator for domtblout (domains)
-    # print('Retrieved domtblout rows (domain hits):')
-    # # Open domtblout file
-    # with open(domtblout_path, 'r') as domtblout_file:
-    #     # Define tblout iterator
-    #     domtblout_iter = Hits.iterator(domtblout_file)
-    #     # Loop through each row
-    #     for i, row in enumerate(domtblout_iter):
-    #         # Print first three rows only
-    #         if i > 3:
-    #             continue
-    #         # Print row
-    #         print(row)
-    #     # Print number of non printed hits
-    #     print('...and {:d} other'.format(i - 3))
-    #     print()
-    #
-    # # Test TBLOUT iterator (sequence hits)
-    # print('Retrieved tblout (sequences) hits:')
-    # # Read TBLOUT file
-    # with SequenceHits(tblout_path) as hits:
-    #     # Loop through each hit
-    #     for i, hit in enumerate(hits.iterate()):
-    #         # Print only the first 3 hits
-    #         if i > 3:
-    #             continue
-    #         # Print current hit
-    #         print(hit)
-    #     # Print number of non printed hits
-    #     print('...and {:d} other'.format(i - 3))
-    #     print()
-    #
-    # # Test DOMTBLOUT iterator (domain hits)
-    # print('Retrieved domtblout (domains) hits:')
-    # # Read DOMTBLOUT file
-    # with DomainHits(domtblout_path) as hits:
-    #     # Loop through each hit
-    #     for i, hit in enumerate(hits.iterate()):
-    #         # Print only the first 3 hits
-    #         if i > 3:
-    #             continue
-    #         # Print current hit
-    #         print(hit)
-    #     # Print number of non printed hits
-    #     print('...and {:d} other'.format(i - 3))
-    #     print()
-    #
-    # # Test sequneces scores retrieval
-    # with SequenceHits(tblout_path) as hits:
-    #
-    #     # Retrieve scores
-    #     scores = hits.get_scores(e_value=0.1)
-    #     # Show sequence scores
-    #     print('Retrieved sequence scores (e-value set to 0.1): ')
-    #     # Loop through each query name
-    #     for curr_qname, curr_scores in scores.items():
-    #         # Print eithr query name and its scores
-    #         print(curr_qname, curr_scores)
-    #
-    #     # Retrieve sequences
-    #     sequences = hits.get_hits(scores)
-    #     # Show retrieved sequences
-    #     print('Retrieved sequence hits: ')
-    #     # Loop through each retrieved sequence
-    #     for curr_qname, curr_tname in sequences:
-    #         # Print either current query name and target name
-    #         print(curr_qname, curr_tname)
-    #
-    # # Test sequneces scores retrieval
-    # with DomainHits(domtblout_path) as hits:
-    #
-    #     # Retrieve scores
-    #     scores = hits.get_scores(e_value=0.1)
-    #     # Show sequence scores
-    #     print('Retrieved domain scores (e-value set to 0.1): ')
-    #     # Loop through each query name
-    #     for curr_qname, curr_scores in scores.items():
-    #         # Print eithr query name and its scores
-    #         print(curr_qname, curr_scores)
-    #
-    #     # Retrieve sequences
-    #     domains = hits.get_hits(scores)
-    #     # Show retrieved sequences
-    #     print('Retrieved domain hits: ')
-    #     # Loop through each retrieved sequence
-    #     for curr_qname, curr_tname in domains:
-    #         # Print either current query name and target name
-    #         print(curr_qname, curr_tname)
-    #
-    # # Remove temporary files
-    # os.remove(tblout_path)
-    # os.remove(domtblout_path)
-    #
-    # # Initialize scores dictionary
-    # scores = dict()
-    # # Define UniProt iterator
-    # uniprot_iter = iglob(UNIPROT_PATH)
-    # # Loop through first 3 example HMM models
-    # for i, chunk_path in enumerate(uniprot_iter):
-    #     # Initailize tblout and domtblout files
-    #     tblout_path = tempfile.NamedTemporaryFile(delete=False).name
-    #     domtblout_path = tempfile.NamedTemporaryFile(delete=False).name
-    #
-    #     # Make HMM search
-    #     hmm_search.run(
-    #         hmm_path=hmm_path,
-    #         target_path=chunk_path,
-    #         tblout_path=tblout_path,
-    #         domtblout_path=domtblout_path,
-    #         seq_e=1000,
-    #         seq_z=1e06,
-    #         num_cpus=1
-    #     )
-    #
-    #     # Retrieve scores
-    #     with SequenceHits(tblout_path) as hits:
-    #         # Retrieve scores
-    #         scores = hits.merge_scores([
-    #             scores,  # Previously stored scores
-    #             hits.get_scores(e_value=1)  # Newly retrieved scores
-    #         ])
-    #
-    #     # Print scores
-    #     print('Scores:')
-    #     for query_name, score in scores.items():
-    #         print(query_name, score)
-    #     print()
-    #
-    #     # Remove temporary files
-    #     os.remove(tblout_path)
-    #     os.remove(domtblout_path)
-    #
-    #     # Early stopping condition
-    #     if i >= 3:
-    #         break
+# # unit testing
+# if __name__ == '__main__':
+#
+#     # Define path to root
+#     ROOT_PATH = os.path.join(os.path.dirname(__file__), '..', '..')
+#     # Define path to example clusters
+#     EXAMPLES_PATH = os.path.join(ROOT_PATH, 'tmp', 'examples', 'MGYP*')
+#     # Define path to UniProt dataset
+#     UNIPROT_PATH = os.path.join(ROOT_PATH, 'data_', 'uniprot', 'chunk*.fa.gz')
+#     # Define path to MGnifam dataset
+#     MGNIFAM_PATH = os.path.join(ROOT_PATH, 'data_', 'mgnify', 'chunk*.fa.gz')
+#
+#     # Define model length
+#     model_len = 1000
+#     # Define longest sequence length
+#     longest_len = 4e04
+#     # Define maximum allowed memory per job
+#     max_memory = 8e09
+#     # Compute required memory per CPU
+#     req_memory = HMMSearch.get_memory(model_len, longest_len)
+#     # Compute maximum number of cores
+#     print(' '.join([
+#         'Memory required for a model of length {:d}'.format(model_len),
+#         'with a maximum sequence length of {:d}'.format(int(longest_len)),
+#         'is {:.2f} GB\n'.format(req_memory / 1e09)
+#     ]))
+#
+#     # Compute max number of CPU with allowed memory 8 GB
+#     num_cpus = HMMSearch.get_cpus(max_memory=max_memory, model_len=model_len,
+#                                   max_cpus=8, longest_seq=longest_len)
+#     # Show retrieved number of CPUs
+#     print(' '.join([
+#         'Maximum number of CPUs allowed with maximum',
+#         'memory per job {:.2f} GB'.format(max_memory / 1e09),
+#         'is {:d}\n'.format(num_cpus)
+#     ]))
+#
+#     # Define new UniProt dataset
+#     uniprot = Fasta.from_str(UNIPROT_PATH)
+#
+#     # Get first chunk in UniProt dataset
+#     chunk = uniprot[0]
+#     # Get longest sequence in chunk
+#     longest_seq, longest_len, chunk_size = chunk.get_longest()
+#     # Print longest sequence and chunk size
+#     print('Longest sequence found is of size {:d},'.format(longest_len), end=' ')
+#     print('found among other {:d} sequences'.format(chunk_size))
+#     print()
+#
+#     # Retrieve first example cluster
+#     cluster_path = next(iglob(EXAMPLES_PATH))
+#     # Get chosen cluster name
+#     cluster_name = os.path.basename(cluster_path)
+#     # Show which cluster has been chosen
+#     print('Chosen cluster is {:s} at {:s}'.format(cluster_name, cluster_path))
+#     print()
+#
+#     # Initailize tblout and domtblout files
+#     tblout_path = tempfile.NamedTemporaryFile(delete=False, suffix='.tblout').name
+#     domtblout_path = tempfile.NamedTemporaryFile(delete=False, suffix='.domtblout').name
+#
+#     # Define new MGnifam dataset
+#     mgnifam = Fasta.from_str(MGNIFAM_PATH)
+#     # Define MGnifam dataset chunk
+#     chunk = mgnifam[0]
+#
+#     # Retrieve HMM from given cluster
+#     hmm_path = os.path.join(cluster_path, 'HMM')
+#     # Retrieve first chunk of UniProt
+#     chunk_path = chunk.path
+#     # Initialize new hmmsearch script
+#     hmm_search = HMMSearch()
+#     # Search HMM against first UniProt chunk
+#     hmm_search.run(
+#         hmm_path=hmm_path,
+#         target_path=chunk_path,
+#         tblout_path=tblout_path,
+#         domtblout_path=domtblout_path,
+#         seq_e=1e03,
+#         seq_z=900000,
+#         num_cpus=1
+#     )
+#
+#     # Print output paths
+#     print('Files retrieved from HMMSEARCH:')
+#     print('  {:s}'.format(tblout_path))
+#     print('  {:s}'.format(domtblout_path))
+#     print()
+#
+#     # Open TBLOUT file
+#     tblout = Tblout(tblout_path)
+#     # Print TBLOUT
+#     print('Tblout:')
+#     for row in tblout.table:
+#         print(row)
+#
+#     # Open DOMTBLOUT file
+#     domtblout = Domtblout(domtblout_path)
+#     # Print DOMTBLOUT
+#     print('Domtblout:')
+#     for row in domtblout.table:
+#         print(row)
+#
+#     # Remove either TBLOUT and DOMTBLOUT files
+#     os.remove(tblout_path)
+#     os.remove(domtblout_path)
+#
+#     # # Test iterator for tblout (sequences)
+#     # print('Retrieved tblout rows (sequence hits):')
+#     # # Open tblout file
+#     # with open(tblout_path, 'r') as tblout_file:
+#     #     # Define tblout iterator
+#     #     tblout_iter = Hits.iterator(tblout_file)
+#     #     # Loop through each row
+#     #     for i, row in enumerate(tblout_iter):
+#     #         # Print first three rows only
+#     #         if i > 3:
+#     #             continue
+#     #         # Print row
+#     #         print(row)
+#     #     # Print number of non printed hits
+#     #     print('...and {:d} other'.format(i - 3))
+#     #     print()
+#     #
+#     # # Test iterator for domtblout (domains)
+#     # print('Retrieved domtblout rows (domain hits):')
+#     # # Open domtblout file
+#     # with open(domtblout_path, 'r') as domtblout_file:
+#     #     # Define tblout iterator
+#     #     domtblout_iter = Hits.iterator(domtblout_file)
+#     #     # Loop through each row
+#     #     for i, row in enumerate(domtblout_iter):
+#     #         # Print first three rows only
+#     #         if i > 3:
+#     #             continue
+#     #         # Print row
+#     #         print(row)
+#     #     # Print number of non printed hits
+#     #     print('...and {:d} other'.format(i - 3))
+#     #     print()
+#     #
+#     # # Test TBLOUT iterator (sequence hits)
+#     # print('Retrieved tblout (sequences) hits:')
+#     # # Read TBLOUT file
+#     # with SequenceHits(tblout_path) as hits:
+#     #     # Loop through each hit
+#     #     for i, hit in enumerate(hits.iterate()):
+#     #         # Print only the first 3 hits
+#     #         if i > 3:
+#     #             continue
+#     #         # Print current hit
+#     #         print(hit)
+#     #     # Print number of non printed hits
+#     #     print('...and {:d} other'.format(i - 3))
+#     #     print()
+#     #
+#     # # Test DOMTBLOUT iterator (domain hits)
+#     # print('Retrieved domtblout (domains) hits:')
+#     # # Read DOMTBLOUT file
+#     # with DomainHits(domtblout_path) as hits:
+#     #     # Loop through each hit
+#     #     for i, hit in enumerate(hits.iterate()):
+#     #         # Print only the first 3 hits
+#     #         if i > 3:
+#     #             continue
+#     #         # Print current hit
+#     #         print(hit)
+#     #     # Print number of non printed hits
+#     #     print('...and {:d} other'.format(i - 3))
+#     #     print()
+#     #
+#     # # Test sequneces scores retrieval
+#     # with SequenceHits(tblout_path) as hits:
+#     #
+#     #     # Retrieve scores
+#     #     scores = hits.get_scores(e_value=0.1)
+#     #     # Show sequence scores
+#     #     print('Retrieved sequence scores (e-value set to 0.1): ')
+#     #     # Loop through each query name
+#     #     for curr_qname, curr_scores in scores.items():
+#     #         # Print eithr query name and its scores
+#     #         print(curr_qname, curr_scores)
+#     #
+#     #     # Retrieve sequences
+#     #     sequences = hits.get_hits(scores)
+#     #     # Show retrieved sequences
+#     #     print('Retrieved sequence hits: ')
+#     #     # Loop through each retrieved sequence
+#     #     for curr_qname, curr_tname in sequences:
+#     #         # Print either current query name and target name
+#     #         print(curr_qname, curr_tname)
+#     #
+#     # # Test sequneces scores retrieval
+#     # with DomainHits(domtblout_path) as hits:
+#     #
+#     #     # Retrieve scores
+#     #     scores = hits.get_scores(e_value=0.1)
+#     #     # Show sequence scores
+#     #     print('Retrieved domain scores (e-value set to 0.1): ')
+#     #     # Loop through each query name
+#     #     for curr_qname, curr_scores in scores.items():
+#     #         # Print eithr query name and its scores
+#     #         print(curr_qname, curr_scores)
+#     #
+#     #     # Retrieve sequences
+#     #     domains = hits.get_hits(scores)
+#     #     # Show retrieved sequences
+#     #     print('Retrieved domain hits: ')
+#     #     # Loop through each retrieved sequence
+#     #     for curr_qname, curr_tname in domains:
+#     #         # Print either current query name and target name
+#     #         print(curr_qname, curr_tname)
+#     #
+#     # # Remove temporary files
+#     # os.remove(tblout_path)
+#     # os.remove(domtblout_path)
+#     #
+#     # # Initialize scores dictionary
+#     # scores = dict()
+#     # # Define UniProt iterator
+#     # uniprot_iter = iglob(UNIPROT_PATH)
+#     # # Loop through first 3 example HMM models
+#     # for i, chunk_path in enumerate(uniprot_iter):
+#     #     # Initailize tblout and domtblout files
+#     #     tblout_path = tempfile.NamedTemporaryFile(delete=False).name
+#     #     domtblout_path = tempfile.NamedTemporaryFile(delete=False).name
+#     #
+#     #     # Make HMM search
+#     #     hmm_search.run(
+#     #         hmm_path=hmm_path,
+#     #         target_path=chunk_path,
+#     #         tblout_path=tblout_path,
+#     #         domtblout_path=domtblout_path,
+#     #         seq_e=1000,
+#     #         seq_z=1e06,
+#     #         num_cpus=1
+#     #     )
+#     #
+#     #     # Retrieve scores
+#     #     with SequenceHits(tblout_path) as hits:
+#     #         # Retrieve scores
+#     #         scores = hits.merge_scores([
+#     #             scores,  # Previously stored scores
+#     #             hits.get_scores(e_value=1)  # Newly retrieved scores
+#     #         ])
+#     #
+#     #     # Print scores
+#     #     print('Scores:')
+#     #     for query_name, score in scores.items():
+#     #         print(query_name, score)
+#     #     print()
+#     #
+#     #     # Remove temporary files
+#     #     os.remove(tblout_path)
+#     #     os.remove(domtblout_path)
+#     #
+#     #     # Early stopping condition
+#     #     if i >= 3:
+#     #         break

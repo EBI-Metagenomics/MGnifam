@@ -1,13 +1,8 @@
-# Dependencies
-import json
-import sys
-import os
-
-# Dask
-from dask.distributed import Client
-
-
 class Pipeline(object):
+    """ Abstract pipeline class
+
+    Define methods for instancing and running a generic pipeline
+    """
 
     # Constructor
     def __init__(self, *args, **kwargs):

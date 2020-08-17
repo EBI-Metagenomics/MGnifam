@@ -1,8 +1,4 @@
 # Dependencies
-from subprocess import CalledProcessError
-from tempfile import NamedTemporaryFile
-from glob import iglob
-from time import time
 import os
 import re
 
@@ -229,49 +225,100 @@ class Domtblout(Tblout):
     }
 
 
-# Unit testing
-if __name__ == '__main__':
+# Utility: merge scores dictionary
+def merge_scores(*args):
+    # Initialize scores dict(query name: (TC, NC, GA))
+    scores = dict()
+    # Loop through each given score dictionary
+    for i in range(len(args)):
+        # Loop through every query name in current scores dict
+        for query_name in args[i]:
 
-    # Define root directory
-    ROOT_PATH = os.path.dirname(__file__) + '/../..'
-    # Define temporary directory path
-    TEMP_PATH = ROOT_PATH + '/tmp'
-    # Example clusters directory
-    EXAMPLE_PATH = TEMP_PATH + '/examples/MGYP*'
+            # Retrieve previous score tuple
+            prev_score = scores.setdefault(query_name, args[i][query_name])
+            # Retrieve previous TC, NC, GA
+            prev_tc, prev_nc, prev_ga = prev_score
 
-    # Define path to first cluster
-    cluster_path = next(iglob(EXAMPLE_PATH))
-    # Get first HMM model
-    hmm_path = os.path.join(cluster_path, 'HMM')
-    # Get FASTA file
-    fasta_path = os.path.join(cluster_path, 'FA')
+            # Retrieve current TC, NC, GA
+            curr_tc, curr_nc, curr_ga = args[i][query_name]
 
-    # Define temporary output file
-    out_path = NamedTemporaryFile(dir=os.getcwd(), delete=False, suffix='.sto').name
-    # Log
-    print('Making HMM alignment of {:s}'.format(out_path))
+            # Set new TC: minimum between current and previous
+            curr_tc = max(curr_tc, prev_tc)
+            # Set new NC: maximum between current and previous
+            curr_nc = min(curr_nc, prev_nc)
+            # Ensure that current NC is not higher than current TC
+            curr_nc = min(curr_tc, curr_nc)
+            # Compute new gathering threshold (GA)
+            curr_ga = min(25.0, curr_nc + ((curr_tc - curr_nc) / 2))
 
-    # Define hmmalign script wrapper instance
-    hmm_align = HMMAlign()
+            # Store new triple (TC, NC, GA)
+            scores[query_name] = (curr_tc, curr_nc, curr_ga)
 
-    # Try to run script
-    try:
-        # Initialize timers
-        time_beg, time_end = time(), 0.0
-        # Run hmmalign script
-        hmm_align(hmm_path, fasta_path, out_path)
-        # Update timers
-        time_end = time()
-        time_tot = time_end - time_beg
+    # Return merged scores dictionary
+    return scores
 
-        # Log
-        print('Generated HMM alignment in {:.0f}'.format(time_tot), end=' ')
-        print('at {:s}'.format(out_path))
 
-    except CalledProcessError as err:
-        # Show error
-        print('Error: hmmalign exited with code {}:'.format(err.returncode))
-        print(err.stderr.strip())
-        print(err.stdout.strip())
-        # Raise error
-        raise
+# Utility: merge hits dictionary
+def merge_hits(*args):
+    # Initialize hits dict(query name: set of target names)
+    hits = dict()
+    # Loop through each given hit dictionary
+    for i in range(len(args)):
+        # Loop through every query name in current dictionary
+        for query_name in args[i]:
+            # Loop through each target name for current query name
+            for target_name in args[i][query_name]:
+                # Store current query name
+                hits.setdefault(query_name, set())
+                # Store current target name
+                hits[query_name].add(target_name)
+    # Return merged hits dictionary
+    return hits
+
+
+# # Unit testing
+# if __name__ == '__main__':
+#
+#     # Define root directory
+#     ROOT_PATH = os.path.dirname(__file__) + '/../..'
+#     # Define temporary directory path
+#     TEMP_PATH = ROOT_PATH + '/tmp'
+#     # Example clusters directory
+#     EXAMPLE_PATH = TEMP_PATH + '/examples/MGYP*'
+#
+#     # Define path to first cluster
+#     cluster_path = next(iglob(EXAMPLE_PATH))
+#     # Get first HMM model
+#     hmm_path = os.path.join(cluster_path, 'HMM')
+#     # Get FASTA file
+#     fasta_path = os.path.join(cluster_path, 'FA')
+#
+#     # Define temporary output file
+#     out_path = NamedTemporaryFile(dir=os.getcwd(), delete=False, suffix='.sto').name
+#     # Log
+#     print('Making HMM alignment of {:s}'.format(out_path))
+#
+#     # Define hmmalign script wrapper instance
+#     hmm_align = HMMAlign()
+#
+#     # Try to run script
+#     try:
+#         # Initialize timers
+#         time_beg, time_end = time(), 0.0
+#         # Run hmmalign script
+#         hmm_align(hmm_path, fasta_path, out_path)
+#         # Update timers
+#         time_end = time()
+#         time_tot = time_end - time_beg
+#
+#         # Log
+#         print('Generated HMM alignment in {:.0f}'.format(time_tot), end=' ')
+#         print('at {:s}'.format(out_path))
+#
+#     except CalledProcessError as err:
+#         # Show error
+#         print('Error: hmmalign exited with code {}:'.format(err.returncode))
+#         print(err.stderr.strip())
+#         print(err.stdout.strip())
+#         # Raise error
+#         raise

@@ -39,41 +39,41 @@ def fasta_iter(iterable):
             # Set new header and reset residues
             header, residues = re.sub(r'[\n\r]+', '', line), ''
             # Case previous header was a valid one
-            if prev_header and prev_residues:
+            if prev_header:
                 # Return previous header and residues as a single string
                 yield prev_header + '\n' + prev_residues
     # Return last entry, if any
-    if header and residues:
+    if header:
         yield header + '\n' + residues
 
 
-# Unit test
-if __name__ == '__main__':
-
-    # Initialize new temporary file
-    fasta_file = NamedTemporaryFile(delete=False)
-    # Fill sample file
-    with open(fasta_file.name, 'w') as ff:
-        ff.write('\n'.join([
-            '>This',
-            'AGSGDAGSGASGGDHAGASGASHASJHDHGDHASHASHS',
-            '>is',
-            'JDHSGSVAHCHSJSVCSSBSJDSJSNSJSJSKNSSJSJD',
-            'ABSHAJSBHAJASJASBSAJAJSAKASJ',
-            '>a',
-            'HDHABAAJSDBSBSCIFUEYRTXBSNCJJGDDHYENSKS',
-            'ANSNANASJASJA',
-            'AJSASNASASJJCBBXSGYFSFDTFSCBYH',
-            '>fasta',
-            'MANSJAKSNDJEUEJCNBCGEGDBSDJSDHDGEVDEHSH'
-        ]))
-
-    # Read file
-    with open(fasta_file.name, 'r') as ff:
-        # Loop through every entry
-        for entry in tqdm(Fasta.read(ff)):
-            # Print single entry
-            print(entry)
-
-    # Delete sample file
-    os.remove(fasta_file.name)
+# # Unit test
+# if __name__ == '__main__':
+#
+#     # Initialize new temporary file
+#     fasta_file = NamedTemporaryFile(delete=False)
+#     # Fill sample file
+#     with open(fasta_file.name, 'w') as ff:
+#         ff.write('\n'.join([
+#             '>This',
+#             'AGSGDAGSGASGGDHAGASGASHASJHDHGDHASHASHS',
+#             '>is',
+#             'JDHSGSVAHCHSJSVCSSBSJDSJSNSJSJSKNSSJSJD',
+#             'ABSHAJSBHAJASJASBSAJAJSAKASJ',
+#             '>a',
+#             'HDHABAAJSDBSBSCIFUEYRTXBSNCJJGDDHYENSKS',
+#             'ANSNANASJASJA',
+#             'AJSASNASASJJCBBXSGYFSFDTFSCBYH',
+#             '>fasta',
+#             'MANSJAKSNDJEUEJCNBCGEGDBSDJSDHDGEVDEHSH'
+#         ]))
+#
+#     # Read file
+#     with open(fasta_file.name, 'r') as ff:
+#         # Loop through every entry
+#         for entry in tqdm(Fasta.read(ff)):
+#             # Print single entry
+#             print(entry)
+#
+#     # Delete sample file
+#     os.remove(fasta_file.name)
