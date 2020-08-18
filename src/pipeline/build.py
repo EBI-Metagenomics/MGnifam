@@ -215,6 +215,14 @@ class Build(Pipeline):
                 verbose=verbose
             )
 
+            # Make SEED alignments
+            self.make_seed_alignments(
+                clusters_path=clusters_path,
+                noaln_path=noaln_path,
+                client=client,
+                verbose=verbose
+            )
+
             # Exit
             return
 
@@ -683,18 +691,12 @@ class Build(Pipeline):
                 # Skip iteration
                 continue
 
-            # # Define a cluster sequences dict(sequence acc: fasta entry)
-            # cluster_sequences = dict()
-            # # Loop through each sequence accession in cluster
-            # for acc in cluster_members.get(cluster_name):
-            #     # Retrieve fasta sequence
-            #     cluster_sequences[acc] = fasta_sequences[acc]
             # Run distributed compositional bias computation
             futures[cluster_name] = client.submit(
                 func=self.predict_comp_bias,
                 fasta_path=fasta_path,  # Input file
-                # pred_threshold=1,  # Set threshold for disorder prediction
-                # pred_inclusive=True,  # Set thresold inclusive
+                pred_threshold=1,  # Set threshold for disorder prediction
+                pred_inclusive=True,  # Set thresold inclusive
                 mobidb=self.mobidb
             )
 
@@ -710,11 +712,6 @@ class Build(Pipeline):
             # Retrieve cluster bias
             cluster_bias = clusters_bias[cluster_name]
 
-            # # Verbose
-            # if verbose:
-            #     print('  current cluster {:s}'.format(cluster_name), end=' ')
-            #     print('has compositional bias {:.0f}'.format(cluster_bias))
-
             # Case bias threshold is inclusive
             if inclusive and cluster_bias < threshold:
                 # Skip iteration
@@ -725,55 +722,6 @@ class Build(Pipeline):
                 continue
             # Move cluster to bias directory
             shutil.move(cluster_path, os.path.join(bias_path, cluster_name))
-
-        # # Loop through each cluster
-        # for cluster_path in clusters_iter:
-        #     #
-
-        # # Initialize set of clusters below and above threshold
-        # bias_below, bias_above = set(), set()
-        # # Retrieve compositional bias threshold
-        # threshold = self.comp_bias_threshold
-        # # Retrieve compositional bias threshold is inclusive or not
-        # inclusive = self.comp_bias_inclusive
-        # # Loop through each cluster name in results
-        # for cluster_name in results.keys():
-        #
-        #     # Define current cluster path
-        #     cluster_path = os.path.join(clusters_path, cluster_name)
-        #     # Encure that cluster path exists
-        #     if not os.path.isdir(cluster_path):
-        #         # Make new directory
-        #         os.mkdir(cluster_path)
-        #
-        #     # Retrieve cluster bias
-        #     cluster_bias = results.get(cluster_name, 1.0)
-        #
-        #     # Write bias score to file
-        #     with open(os.path.join(cluster_path, 'BIAS'), 'w') as file:
-        #         file.write(str(cluster_bias))
-        #
-        #     # Define target path if bias is too high
-        #     target_path = os.path.join(bias_path, cluster_name)
-        #     # Case compositional bias threshold is inclusive
-        #     if (cluster_bias >= threshold) and inclusive:
-        #         # Move cluster subfolder into BIAS folder
-        #         shutil.move(cluster_path, target_path)
-        #         # Add cluster name to the above threshold set
-        #         bias_above.add(cluster_name)
-        #         # Go to next iteration
-        #         continue
-        #     # Case compositional bias threshold is exclusive
-        #     if (cluster_bias > threshold) and not inclusive:
-        #         # Move cluster subfolder into BIAS folder
-        #         shutil.move(cluster_path, target_path)
-        #         # Add cluster name to the above threshold set
-        #         bias_above.add(cluster_name)
-        #         # Go to next iteration
-        #         continue
-        #
-        #     # By default, add cluster name to the below threshold set
-        #     bias_below.add(cluster_name)
 
         # Update timers
         time_end = time()
@@ -796,16 +744,6 @@ class Build(Pipeline):
             print('Compositional bias threshold is {:.2f}:'.format(threshold))
             print('  {:d} clusters are above it'.format(clusters_above))
             print('  {:d} clusters are below it'.format(clusters_below))
-
-        # # Verbose log
-        # if verbose:
-        #     print('Compositional bias computed for {:d} clusters'.format(len(cluster_members)), end=' ')
-        #     print('among which {:d} were below'.format(len(bias_below)), end=' ')
-        #     print('threshold of {:.02f},'.format(self.comp_bias_threshold), end=' ')
-        #     print('while {:d} were above it'.format(len(bias_above)))
-        #
-        # # Return both below and above threshold sets
-        # return bias_below, bias_above
 
     @staticmethod
     def predict_comp_bias(fasta_path, mobidb, pred_threshold=1, pred_inclusive=True):
@@ -849,121 +787,135 @@ class Build(Pipeline):
         # Return compositional bias
         return comp_bias
 
-    @staticmethod
-    def compute_comp_bias(fasta_sequences, mobidb, pred_threshold=1, pred_inclusive=True):
-        """ Compute compositional bias for a cluster
-
-        Given a sequences dict(seqeunce acc: fasta entry), run MobiDbLite
-        predictor against them and produces a disordered prediction for each
-        residue. A residue is considered to be disordere if it has at least
-        <pred_threshold> disordered predictions.
-
-        Once disordered predictiona are computed, compositional bias is
-        calculated as rate of predicted disordered residues over number of
-        total residues.
-
-        Args
-        seqeunces (dict)        Dictionary mapping sequence accession to actual
-                                FASTA entry
-        mobidb (MobiDbLite)     Instance of MobiDB Lite interface
-        pred_threshold (int)    Number of times a residue must be predicted
-                                disordered to be considered disordered.
-        pred_inclusive (bool)   Wether the prediction threshold should be
-                                inclusive or not
-
-        Return
-        (float)                 Compositional bias score
-        """
-        # Make predictions running MobiDB Lite
-        predictions = mobidb.run(fasta_sequences=fasta_sequences)
-        # # Apply threshold over predictions
-        # predictions = mobidb.apply_threshold(
-        #     sequences=predictions,
-        #     threshold=pred_threshold,
-        #     inclusive=pred_inclusive
-        # )
-        # # Compute and return compositional bias
-        # return mobidb.compute_bias(predictions)
-
     # Make SEED alignments
-    def make_seed_alignments(self, cluster_members, fasta_sequences, clusters_path, client, verbose=False):
+    def make_seed_alignments(self, clusters_path, noaln_path, client, verbose=False):
         """ Make SEED alignments
 
-        Given a cluster memebers dictionary associating sequences accession
-        numbers to a cluster name and a fasta sequences dictionary associating
-        to each sequence accession number its fasta entry, SEED alignment is
-        produced through Muscle algorithm and stored at given cluster directory.
+        Loop through all cluster directories, retrieve source fasta
+        sequences file SEED.fa and use it to make a new alignment.
+        Then, automatically trim the alignment and check its dimension: if it
+        is too small, drop it.
 
         Args
-        cluster_members (dict)      Dictionary associating cluster names (keys)
-                                    to its member sequences accession numbers
-                                    (values)
-        fasta_seqeunces (dict)      Dictionary associating sequence accession
-                                    numbers (keys) to fasta entries (values)
         clusters_path (str)         Path where cluster folders can be found
         client (str)                Client used to schedule jobs
         verbose (bool)              Wether to show verbose log or not
         """
-        # Verbose log
+        # Initialize timers
+        time_beg, time_end = time(), 0.0
+        # Retrieve all clusters in given root directory
+        clusters_iter = glob(os.path.join(clusters_path, 'MGYP*'))
+
+        # Verbose
         if verbose:
             print('Making SEED alignments', end=' ')
-            print('for {:d} clusters'.format(len(cluster_members)), end=' ')
-            print('at {:s}'.format(clusters_path))
+            print('for {:d} clusters'.format(len(clusters_iter)), end=' ')
+            print('at {:s}...'.format(clusters_path), end='')
 
         # Initialize futures
-        futures = list()
+        futures = dict()
         # Loop through each cluster
-        for cluster_name in cluster_members:
+        for cluster_path in clusters_iter:
+            # Define current cluster name
+            cluster_name = os.path.basename(cluster_path)
+            # Define fasta file path (SEED.fa)
+            fasta_path = os.path.join(cluster_path, 'SEED.fa')
 
-            # Define current cluster path
-            cluster_path = os.path.join(clusters_path, cluster_name)
-            # Ensure that cluster directory exists
-            if not os.path.exists(cluster_path):
-                # Try to make one
-                os.mkdir(cluster_path)
-
-            # Define raw alignment path
-            alignment_path = os.path.join(cluster_path, 'SEED_raw')
-
-            # Initialize cluster sequences
-            cluster_sequences = list()
-            # Loop through each sequence accession in cluster
-            for sequence_acc in cluster_members.get(cluster_name):
-                # Save fasta sequence
-                cluster_sequences.append(fasta_sequences[sequence_acc])
+            # # Define raw alignment path
+            # raw_aln_path = os.path.join(cluster_path, 'SEED_raw')
+            #
+            # # Initialize cluster sequences
+            # cluster_sequences = list()
+            # # Loop through each sequence accession in cluster
+            # for sequence_acc in cluster_members.get(cluster_name):
+            #     # Save fasta sequence
+            #     cluster_sequences.append(fasta_sequences[sequence_acc])
 
             # Make SEED alignment in cluster directory
-            future = client.submit(
-                func=self.make_muscle_alignment,
-                fasta_sequences=cluster_sequences,
-                alignment_path=alignment_path,
+            futures[cluster_name] = client.submit(
+                # Call wrapper function for MUSCLE alignment
+                func=self.make_seed_alignment,
+                # Path to source fasta file
+                fasta_path=fasta_path,
+                # MSA transformer instance
+                transform=self.seed_transform,
+                # Muscle MSA aligner
                 muscle=self.muscle,
             )
 
-            # Store future
-            futures.append(future)
-
         # Retrieve results
-        client.gather(futures)
+        clusters_shape = client.gather(futures)
+        # Loop through all clusters
+        for cluster_name in clusters_shape:
+            # Define cluster path
+            cluster_path = os.path.join(clusters_path, cluster_name)
+            # Retrieve current alignment shape
+            h, w = clusters_shape[cluster_name]
+
+            # Case new SEED does fulfill requirements
+            if (h >= self.seed_min_height) and (w >= self.seed_min_width):
+                # Go to next iteration
+                continue
+
+            # Otherwise, discard cluster
+            shutil.move(cluster_path, os.path.join(noaln_path, cluster_name))
+
+        # Update timers
+        time_end = time()
+        # Verbose
+        if verbose:
+            # Show execution time
+            print('done in {:.0f} seconds'.format(time_end - time_beg))
 
     @staticmethod
-    def make_muscle_alignment(fasta_sequences, alignment_path, muscle):
+    def make_seed_alignment(fasta_path, transform, muscle):
         """ Use MUSCLE to make a multiple sequence alignment
 
         Args
-        fasta_sequences (list)      List of fasta sequences
-        alignment_path (str)        Path where alignment will be moved once
-                                    done
-        muscle (Muscle)             Instance of Muscle interface object
+        fasta_path (str)                Path to file which must be aligned
+        transform (msa.Transform)       MSA transformations which aligned MSA
+                                        must undergo
+        muscle (msa.Muscle)             Instance of MUSCLE interface object
+
+        Return
+        (int)                           Height of the alignment
+        (int)                           Witdh of the alignment
         """
-        # Make multiple sequence alignment
-        alignment = muscle.run(
-            sequences=fasta_sequences,
-            acc_regex='>(\S+)',
-            verbose=False
+        # Define current cluster path
+        cluster_path = os.path.dirname(fasta_path)
+        # Define MUSCLE output alignment path (overwrite input fasta)
+        out_path = os.path.join(cluster_path, 'SEED.fa')
+        # Define trimmed alignment path
+        aln_path = os.path.join(cluster_path, 'SEED.aln')
+
+        # Run MUSCLE, get raw output
+        muscle(
+            # Input fasta file path
+            fasta_path=fasta_path,
+            # Output alignment path
+            out_path=out_path,
+            # Set quiet execution
+            quiet=True
         )
-        # Store alignment to disk
-        alignment.to_aln(alignment_path)
+
+        # Load SEED alignment from fasta output file
+        seed = MSA.from_fasta(out_path, regex=r'>(\S+)')
+        # Transform SEED alignment
+        seed = transform(seed)
+        # Save SEED alignment to file
+        seed.to_aln(aln_path)
+
+        # Return height and width of the alignment
+        return seed.shape
+
+        # # Make multiple sequence alignment
+        # muscle.run(
+        #     sequences=fasta_sequences,
+        #     acc_regex='>(\S+)',
+        #     verbose=False
+        # )
+        # # Store alignment to disk
+        # alignment.to_aln(alignment_path)
 
     # Automated SEED alignments trimming
     def trim_seed_alignments(self, cluster_names, clusters_path, noaln_path, verbose=False):

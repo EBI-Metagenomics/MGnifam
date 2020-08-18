@@ -3,6 +3,7 @@ from src.msa.msa import MSA
 from src.msa.msa import consensus, occupancy, conservation
 import matplotlib.pyplot as plt
 import numpy as np
+import sys
 
 
 class Transform(object):
@@ -294,7 +295,7 @@ class MakeNonRedundant(Transform):
         else:  # Apply redundancy threshold (exclusive)
             red_mat = (red_mat > threshold(red_mat))
         # Get number of residues per sequence
-        num_res = np.sum((msa.aln != msa.gap), axis=1)
+        num_res = np.sum(np.isin(msa.aln, list(msa.gap), invert=True), axis=1)
         # Get set of sequence all indices available, sorted by length
         seq_all = set(np.argsort(num_res).tolist())
         # Initialize empty set of deleted (redundant) sequences
@@ -319,6 +320,7 @@ if __name__ == '__main__':
 
     # Define path to input seed
     SEED_PATH = './tmp/examples/MGYP000050665084/SEED'
+    # SEED_PATH = 'tmp/MGYP000411512106/SEED.fa'
 
     # Define transformation pipeline
     transform = Compose([
@@ -326,16 +328,15 @@ if __name__ == '__main__':
         OccupancyTrim(threshold=0.4, inclusive=True),
         # Exclude sequences with less than half occupancy
         OccupancyFilter(threshold=0.5, inclusive=True)
-        # # Make non redundant with 80 percent threshold
-        # MakeNonRedundant(threshold=0.8, inclusive=False)
     ])
 
     # Read test multiple sequence alignment
     pre_trim = MSA.from_aln(SEED_PATH)
+    # pre_trim = MSA.from_fasta(SEED_PATH, regex=r'>(\S+)')
     # Debug
     print('Input multiple sequence alignment has shape', pre_trim.aln.shape)
 
-    # Apply non redundancy to input msa
+    # Apply transformation to input msa
     post_trim = transform(pre_trim)
     # Debug
     print('Filtered multiple sequence alignment has shape', post_trim.aln.shape)

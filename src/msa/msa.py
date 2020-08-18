@@ -7,7 +7,6 @@ from glob import glob
 import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
-import tempfile
 import os
 import re
 
@@ -24,7 +23,7 @@ class MSA(object):
         'A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L',
         'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y'
     ])
-    # Gap character
+    # Gap characters
     gap = '-.'
 
     # Constructor
@@ -52,8 +51,8 @@ class MSA(object):
         # Check if there is at least 1 position remaining
         if (i < j):
             # Update begin and end positions
-            msa.beg += self.beg + np.sum(np.isin(self.aln[:, :i], self.gap, invert=True), axis=1)
-            msa.end += self.end - np.sum(np.isin(self.aln[:, j:], self.gap, invert=True), axis=1)
+            msa.beg = self.beg + np.sum(np.isin(self.aln[:, :i], list(self.gap), invert=True), axis=1)
+            msa.end = self.end - np.sum(np.isin(self.aln[:, j:], list(self.gap), invert=True), axis=1)
         # Return trimmed alignment
         return msa
 
@@ -79,6 +78,7 @@ class MSA(object):
         # Return slices multiple sequence alignment object
         return msa
 
+    @property
     def is_empty(self):
         """
         Checks whether there isn't any row or column in the current msa
@@ -92,9 +92,18 @@ class MSA(object):
         # Check wether there is at least one cell
         return (n * m) <= 0
 
+    @property
+    def shape(self):
+        # Case alignment is empty
+        if self.is_empty:
+            # Return zeroes
+            return 0, 0
+        # Otherwise return alignment shape
+        return self.aln.shape
+
     # Load from aligned file
     @classmethod
-    def from_aln(cls, in_path):
+    def from_aln(cls, path):
         """Load MSA from .aln file
 
         Args
@@ -106,13 +115,13 @@ class MSA(object):
         # Initialize entries dictionary (key is accession)
         entries = dict()
         # Read file
-        with open_file(in_path, 'r', 'rt') as in_file:
+        with open_file(path, 'r', 'rt') as file:
             # Loop through each line in file
-            for line in in_file:
+            for line in file:
                 # Get current (last) key
                 acc = [*entries.keys()][-1] if entries else ''
                 # Check if current line is header
-                is_header = re.search(r'^([a-zA-Z0-9]+)/(\d+)-(\d+)[ ]*', line)
+                is_header = re.search(r'^(\S+)/(\d+)-(\d+)\s+', line)
                 # If header, retrieve it
                 if is_header:
                     # Retrieve accession
@@ -145,24 +154,26 @@ class MSA(object):
         return msa
 
     # Print out alignment to fasta file
-    def to_aln(self, out_path):
-        # Case alignment is empty
-        if self.is_empty():
-            # Do not output file
-            return self
-        # Get description
-        desc = np.array([
-            # Set descriptio line
-            str(self.acc[i]) + '/' + str(self.beg[i]) + '-' + str(self.end[i])
-            # For every line in the alignment
-            for i in range(self.aln.shape[0])
-        ])
-        # Get max len of description prefix
-        desc_len = len(max(desc, key=len))
+    def to_aln(self, path):
+        # Initialize description column
+        desc = list()
+        # Initialize description length (maximum number of characters)
+        desc_len = 0
+        # Loop through all rows in alignment
+        for i in range(self.shape[0]):
+            # Retrieve parameters for making description string
+            acc, beg, end = self.acc[i], self.beg[i], self.end[i]
+            # Make description string
+            desc_str = r'{:s}/{:d}-{:d}'.format(acc, beg, end)
+            # Update maximum description length
+            desc_len = max(len(desc_str), desc_len)
+            # Store description string
+            desc.append(desc_str)
+
         # Open file buffer
-        with open(out_path, 'w') as out_file:
+        with open(path, 'w') as out_file:
             # Loop through each line in the alignment
-            for i in range(self.aln.shape[0]):
+            for i in range(self.shape[0]):
                 # Format output line
                 line = '{desc:s} {spaces:s}{aln:s}\n'.format(
                     # Description prefix
@@ -174,19 +185,17 @@ class MSA(object):
                 )
                 # Write sequence
                 out_file.write(line)
-        # Return self, allows chaining
-        return self
 
     # Load from fasta file
     @classmethod
-    def from_fasta(cls, in_file, acc_regex=r'^>(.*)[\n\r]*$'):
+    def from_fasta(cls, path, regex=r'^>(.*)[\n\r]*$'):
         """ Load alignment from .fasta file
 
         Args
-        in_file     (file)  Buffer for reading input fasta file
-        acc_regex   (str)   Regex used to extract accession number (or a
+        path (str)          Path to fasta file holding sequences
+        regex (str)         Regex used to extract accession number (or a
                             generic id string) from fasta header lines
-                            (by default all the line without '>' character)
+                            (by default all the line except trailing '>' char)
 
         Return
         MSA                 Return new Multiple Sequnece Alignment object
@@ -197,36 +206,40 @@ class MSA(object):
         aln = list()
         # Initialize accession number, begin and end positions as lists
         acc, beg, end = list(), list(), list()
-        # Loop through fasta file lines
-        for entry in fasta_iter(in_file):
-            # Split entry in header and residues
-            header, residues = tuple(entry.split('\n'))
-            # Save accession number / id
-            acc.append(re.search(acc_regex, header).group(1))
-            # Save residues for current aligned sequence
-            aln.append(list(residues))
+        # Open file
+        with open(path, 'r') as file:
+            # Loop through fasta file lines
+            for entry in fasta_iter(file):
+                # Split entry in header and residues
+                header, residues = tuple(entry.split('\n'))
+                # Save accession number / id
+                acc.append(re.search(regex, header).group(1))
+                # Save residues for current aligned sequence
+                aln.append(list(residues))
+
         # Update attributes
         msa.aln = np.array(aln)
         msa.acc = np.array(acc)
-        # Compute number of non-gap reisudes for each aligned sequence
-        not_gap = np.isin(msa.aln, cls.gap, invert=True).sum(axis=1)
+        # Count number of non-gap reisudes for each aligned sequence
+        res = np.sum(np.isin(msa.aln, list(cls.gap), invert=True), axis=1)
         # Define begin position of each aligned sequence
-        msa.beg = (not_gap > 0).astype(np.int)
+        msa.beg = np.ones_like(res, dtype=np.int)
         # Define end position of each aligned sequence
-        msa.end = not_gap.astype(np.int)
+        msa.end = res.astype(np.int)
+
         # Return reference to current object (allows chaining)
         return msa
 
     # Load from stockholm file (hmmalign output)
     @classmethod
-    def from_sto(cls, in_file):
+    def from_sto(cls, path):
         """ Load alignment from .sto stockholm file
 
         Args
-        in_file     (file)  Buffer for reading input fasta file
+        path (str)      Path to .stockholm file holding alignment
 
         Return
-        MSA                 Return new Multiple Sequnece Alignment object
+        MSA             Return new Multiple Sequnece Alignment object
         """
         # Initialize new MSA object
         msa = cls()
@@ -239,22 +252,24 @@ class MSA(object):
 
         # Initialize an intermediate dictionary
         sequences_dict = dict()
-        # Loop through stockholm file lines
-        for line in in_file:
-            # Define expected line format to match
-            match = re.search(r'^([^#]\S*)\s+(\S+)', line)
-            # Case current line does not match expected format
-            if not match:
-                # Go to next iteration
-                continue
-            # Get raw accession
-            accession = match.group(1)
-            # Get residues list
-            residues = list(match.group(2))
-            # Initialize entry
-            sequences_dict.setdefault(accession, residues)
-            # Update entry
-            sequences_dict[accession] += list(residues)
+        # Open file
+        with open(path, 'r') as file:
+            # Loop through stockholm file lines
+            for line in file:
+                # Define expected line format to match
+                match = re.search(r'^([^#]\S*)\s+(\S+)', line)
+                # Case current line does not match expected format
+                if not match:
+                    # Go to next iteration
+                    continue
+                # Get raw accession
+                accession = match.group(1)
+                # Get residues list
+                residues = list(match.group(2))
+                # Initialize entry
+                sequences_dict.setdefault(accession, residues)
+                # Update entry
+                sequences_dict[accession] += list(residues)
 
         # Update list of sequences
         for accession, residues in sequences_dict.items():
@@ -284,7 +299,7 @@ class MSA(object):
         # Case scoring is according to gaps
         if score == 'gap':  # Default: search for gaps
             # Make new alignment matrix
-            aln = np.isin(aln, self.gap, invert=True)
+            aln = np.isin(aln, list(self.gap), invert=True)
             # Set default color map
             cmap = 'binary_r' if cmap is None else cmap
         # Otherwise
@@ -314,7 +329,7 @@ class MSA(object):
         # Add colorbar
         _ = plt.gcf().colorbar(im, ax=ax)
         # Make a mask for gaps
-        gaps = np.isin(self.aln, self.gap)
+        gaps = np.isin(self.aln, list(self.gap))
         # Add alpha:
         _ = ax.imshow(
             # Set balck only gap positions
@@ -508,65 +523,119 @@ class Muscle(object):
         self.cmd = cmd
         self.env = env
 
-    def run(self, sequences, acc_regex='^>(\S+)', verbose=False):
-        """
-        Takes as input list of n sequences, then creates a multiple sequence
-        alignment with n rows (one per sequence) and a nomber of coulums
-        m < m1 + m2 with m1 and m2 are the two longest sequences.
+    # Just a wrapper for run function
+    def __call__(self, *args, **kwargs):
+        # Just call run method
+        return self.run(*args, **kwargs)
+
+    # def run(self, sequences, acc_regex='^>(\S+)', verbose=False):
+    #     """
+    #     Takes as input list of n sequences, then creates a multiple sequence
+    #     alignment with n rows (one per sequence) and a nomber of coulums
+    #     m < m1 + m2 with m1 and m2 are the two longest sequences.
+    #
+    #     Args
+    #     sequences (list)    List of strings containing fasta entries
+    #     acc_regex (str)     Regex used to extract accession number (or a
+    #                         generic id string) from fasta header lines
+    #                         (by default first string after '>' character)
+    #     verbose (bool)      Wether to show verbose log or not
+    #
+    #     Return
+    #     (msa.MSA)           Instance of multiple sequence alignment
+    #     """
+    #     # Define a new temporary file containing input sequences
+    #     fasta_file = tempfile.NamedTemporaryFile(delete=False)
+    #     # Open temporary fasta file
+    #     with open(fasta_file.name, 'w') as ff:
+    #         # Get number of input sequences
+    #         n = len(sequences)
+    #         # Loop through each input entry
+    #         for i in range(n):
+    #             # Write input fasta sequences to temporary fasta file
+    #             ff.write(sequences[i] + '\n')
+    def run(self, fasta_path='', out_path='', quiet=True):
+        """ Make MUSCLE multiple sequence alignment
 
         Args
-        sequences (list)    List of strings containing fasta entries
-        acc_regex (str)     Regex used to extract accession number (or a
-                            generic id string) from fasta header lines
-                            (by default first string after '>' character)
-        verbose (bool)      Wether to show verbose log or not
+        fasta_path (str)            Path to input fasta file
+        out_path (str)              Path where to store output alignment
 
-        Return
-        (msa.MSA)           Instance of multiple sequence alignment
+        Raise
+        (CalledProcessError)        In case it was impossible to run MUSCLE
+        (FileNotFoundError)         In case input fasta file cen not be found
         """
-        # Define a new temporary file containing input sequences
-        fasta_file = tempfile.NamedTemporaryFile(delete=False)
-        # Open temporary fasta file
-        with open(fasta_file.name, 'w') as ff:
-            # Get number of input sequences
-            n = len(sequences)
-            # Loop through each input entry
-            for i in range(n):
-                # Write input fasta sequences to temporary fasta file
-                ff.write(sequences[i] + '\n')
 
-        # Open new output temporary file
-        out_file = tempfile.NamedTemporaryFile(delete=False)
-        # Run Muscle multiple sequence alignment
-        cmd_out = subprocess.run(
-            capture_output=True,  # Capture command output
-            encoding='utf-8',  # Set output encoding to string
-            check=True,  # Check execution (error code)
-            env=self.env,  # Set command environment
-            # Define command line  arguments
-            args=[
-                *self.cmd, '-quiet',  # Do not intercept command line output
-                # self.cmd,
-                '-in', fasta_file.name,  # Path to input temporary file
-                '-out', out_file.name  # Path to output temporary file
-            ]
+        # Check input fasta file path
+        if not os.path.isfile(fasta_path):
+            # Raise exception
+            raise FileNotFoundError(' '.join([
+                'could not find input fasta file',
+                'at {:s}'.format(fasta_path)
+            ]))
+
+        # # Open new output temporary file
+        # out_file = tempfile.NamedTemporaryFile(delete=False)
+        # # Run Muscle multiple sequence alignment
+        # cmd_out = subprocess.run(
+        #     capture_output=True,  # Capture command output
+        #     encoding='utf-8',  # Set output encoding to string
+        #     check=True,  # Check execution (error code)
+        #     env=self.env,  # Set command environment
+        #     # Define command line  arguments
+        #     args=[
+        #         *self.cmd, '-quiet',  # Do not intercept command line output
+        #         # self.cmd,
+        #         '-in', fasta_file.name,  # Path to input temporary file
+        #         '-out', out_file.name  # Path to output temporary file
+        #     ]
+        # )
+
+        # Initialize command line arguments
+        args = self.cmd
+        # Set quiet
+        args += ['-quiet'] if quiet else []
+        # Add input file path
+        args += ['-in', fasta_path] if fasta_path else []
+        # Add output file path
+        args += ['-out', out_path] if out_path else []
+
+        # # Initialize output multiple sequnece alignment
+        # out_msa = MSA()
+        # # Read output temporary file
+        # with open(out_file.name, 'r') as of:
+        #     # # Debug
+        #     # print(out_file.read().decode('utf-8'))
+        #     # Read multiple sequence alignment from fasta file
+        #     out_msa = out_msa.from_fasta(of, acc_regex=acc_regex)
+        #
+        # # Delete temporary files
+        # os.remove(fasta_file.name)
+        # os.remove(out_file.name)
+        #
+        # # Return output multiple sequence alignment
+        # return out_msa
+
+        # Run command line script
+        return subprocess.run(
+            capture_output=True,  # Capture console output
+            encoding='utf-8',  # STDOUT/STDERR encoding
+            check=True,  # Check that script worked properly
+            env=self.env,  # Environmental variables
+            args=args
         )
 
-        # Initialize output multiple sequnece alignment
-        out_msa = MSA()
-        # Read output temporary file
-        with open(out_file.name, 'r') as of:
-            # # Debug
-            # print(out_file.read().decode('utf-8'))
-            # Read multiple sequence alignment from fasta file
-            out_msa = out_msa.from_fasta(of, acc_regex=acc_regex)
+    @staticmethod
+    def parse(self, out_path):
+        """ Load file as MSA instance
 
-        # Delete temporary files
-        os.remove(fasta_file.name)
-        os.remove(out_file.name)
+        Args
+        out_path (str)          Path to Muscle output file
 
-        # Return output multiple sequence alignment
-        return out_msa
+        Raise
+        (FileNotFoundError)     In case output file is not valid
+        """
+        raise NotImplementedError
 
 
 # Unit testing
@@ -598,25 +667,25 @@ if __name__ == '__main__':
         print(''.join(msa.aln[i, :]))
         print()
 
-    # Define alignment path
-    sto_path = os.path.join(examples_path[0], 'ALIGN.sto')
-    # Open alignment file
-    with open(sto_path, 'r') as sto_file:
-        # Read multiple sequence alignment from stockholm
-        msa = MSA.from_sto(sto_file)
-        # Check number of aligned sequences
-        print('There are {:d} aligned sequences'.format(msa.aln.shape[0]), end=' ')
-        print('with {:d} columns'.format(msa.aln.shape[1]), end=' ')
-        print('in alignment {:s}'.format(sto_path))
-        # Check first 5 rows
-        for i in range(0, min(5, msa.aln.shape[0])):
-            # Print sequence description
-            print('Sequence nr %d: %s from %d to %d' % (
-                i+1, msa.acc[i], msa.beg[i], msa.end[i]
-            ))
-            # Print actual sequence
-            print(''.join(msa.aln[i, :]))
-            print()
+    # # Define alignment path
+    # sto_path = os.path.join(examples_path[0], 'ALIGN.sto')
+    # # Open alignment file
+    # with open(sto_path, 'r') as sto_file:
+    #     # Read multiple sequence alignment from stockholm
+    #     msa = MSA.from_sto(sto_file)
+    #     # Check number of aligned sequences
+    #     print('There are {:d} aligned sequences'.format(msa.aln.shape[0]), end=' ')
+    #     print('with {:d} columns'.format(msa.aln.shape[1]), end=' ')
+    #     print('in alignment {:s}'.format(sto_path))
+    #     # Check first 5 rows
+    #     for i in range(0, min(5, msa.aln.shape[0])):
+    #         # Print sequence description
+    #         print('Sequence nr %d: %s from %d to %d' % (
+    #             i+1, msa.acc[i], msa.beg[i], msa.end[i]
+    #         ))
+    #         # Print actual sequence
+    #         print(''.join(msa.aln[i, :]))
+    #         print()
 
     # # Test one hot encoder
     # ohe = MSA.one_hot_encode(msa.aln, include_gap=True)
@@ -656,7 +725,7 @@ if __name__ == '__main__':
         ))
 
     # Make complete trimming (keep none)
-    trimmed = msa.trim(0, 0)
+    trimmed = msa.trim(10, 50)
     # Test trimming
     print('Input alignment has shape {}'.format(msa.aln.shape))
     print('Trimmed alignment has shape {}'.format(trimmed.aln.shape))
