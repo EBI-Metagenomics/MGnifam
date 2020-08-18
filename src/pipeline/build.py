@@ -154,18 +154,18 @@ class Build(Pipeline):
                 verbose=verbose
             )
 
-            # Check that cluster members contain all the required sequences
-            self.check_cluster_members(
-                clusters_path=clusters_path,
-                verbose=verbose
-            )
-
-            # Check compositional bias
-            self.check_comp_bias(
-                clusters_path=clusters_path,
-                verbose=verbose,
-                client=client
-            )
+            # # Check that cluster members contain all the required sequences
+            # self.check_cluster_members(
+            #     clusters_path=clusters_path,
+            #     verbose=verbose
+            # )
+            #
+            # # Check compositional bias
+            # self.check_comp_bias(
+            #     clusters_path=clusters_path,
+            #     verbose=verbose,
+            #     client=client
+            # )
 
         # # Check cluster members
         # self.check_cluster_members(cluster_names, cluster_members)
@@ -471,30 +471,30 @@ class Build(Pipeline):
         """
         # Retrieve sequence accession (keys only)
         accessions = [*sequences_acc.keys()]
-        # Search for sequences accession numbers
-        fasta_sequences = mgnifam_chunk.search(accessions)
-        # Loop through all sequence accession
-        for accession in accessions:
-
-            # Case sequence accession is not among the retrieved ones
-            if accession not in set(fasta_sequences.keys()):
-                # Skip iteration
-                continue
-
-            # Retrieve fasta entry
-            fasta_entry = fasta_sequences[accession]
-            # Get cluster names
-            cluster_names = sequences_acc[accession]
-            # Loop through each cluster names
-            for cluster_name in cluster_names:
-                # Define current cluster path
-                cluster_path = os.path.join(clusters_path, cluster_name)
-                # Define fasta file path
-                fasta_path = os.path.join(cluster_path, 'SEED.fa')
-                # Open FASTA file
-                with open(fasta_path, 'a+') as file:
-                    # Append fasta entry to file
-                    file.write(fasta_entry + '\n')
+        # # Search for sequences accession numbers
+        # fasta_sequences = mgnifam_chunk.search(accessions)
+        # # Loop through all sequence accession
+        # for accession in accessions:
+        #
+        #     # Case sequence accession is not among the retrieved ones
+        #     if accession not in set(fasta_sequences.keys()):
+        #         # Skip iteration
+        #         continue
+        #
+        #     # Retrieve fasta entry
+        #     fasta_entry = fasta_sequences[accession]
+        #     # Get cluster names
+        #     cluster_names = sequences_acc[accession]
+        #     # Loop through each cluster names
+        #     for cluster_name in cluster_names:
+        #         # Define current cluster path
+        #         cluster_path = os.path.join(clusters_path, cluster_name)
+        #         # Define fasta file path
+        #         fasta_path = os.path.join(cluster_path, 'SEED.fa')
+        #         # Open FASTA file
+        #         with open(fasta_path, 'a+') as file:
+        #             # Append fasta entry to file
+        #             file.write(fasta_entry + '\n')
         # Exit
         return
 
@@ -751,7 +751,8 @@ class Build(Pipeline):
                 cluster_path=cluster_path,
                 discard_path=discard_path,
                 threshold=self.comp_bias_threshold,
-                inclusive=self.comp_bias_inclusive
+                inclusive=self.comp_bias_inclusive,
+                mobidb=self.mobidb
             )
             # Store future
             futures.append(future)
@@ -2228,12 +2229,12 @@ if __name__ == '__main__':
     )
     # Define minimum memory allocable per job
     group.add_argument(
-        '-m', '--min_memory', type=str, default='1 GB',
+        '-m', '--min_memory', type=str, default='2 GB',
         help='Minimum memory allocable per process'
     )
     # Define maximum memory allocable per job
     group.add_argument(
-        '-M', '--max_memory', type=str, default='1 GB',
+        '-M', '--max_memory', type=str, default='4 GB',
         help='Maximum memory allocable per process'
     )
     # Define walltime
@@ -2256,10 +2257,8 @@ if __name__ == '__main__':
             # Define memory boundaries
             min_memory=args.min_memory,
             max_memory=args.max_memory,
-            # # Set death timeout
-            # death_timeout=30,
-            # # Set interface
-            # interface='lo',
+            # Debug
+            silence_logs='debug',
             # Define walltime
             walltime=args.walltime,
             # Define processes per job

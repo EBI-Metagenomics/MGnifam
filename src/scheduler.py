@@ -120,14 +120,11 @@ class LSFScheduler(Scheduler):
         }, **kwargs}
 
     # Define adapt method
-    def adapt(self, minimum, maximum, cores=1, memory='1 GB', **kwargs):
-        # Call parent adapt method (check values)
-        super().adapt(minimum, maximum, cores=cores, memory=memory, **kwargs)
+    def adapt(self, minimum, maximum, **kwargs):
         # Merge kwargs with default kwargs
-        kwargs = {**self.cluster_kwargs, **kwargs, **{
-            'cores': cores,
-            'memory': memory
-        }}
+        kwargs = {**self.cluster_kwargs, **kwargs}
+        # Call parent adapt method (check values)
+        super().adapt(minimum, maximum, **kwargs)
         # Make new cluster
         self._cluster = LSFCluster(**kwargs)
         # Make client
