@@ -1,6 +1,10 @@
 # Dependencies
 from src.pipeline.pipeline import Pipeline
 from src.scheduler import LSFScheduler, LocalScheduler
+from src.dataset import LinClust, Fasta
+from src.sequences import fasta_iter
+from src.disorder import MobiDbLite
+
 from src.msa.transform import Compose, OccupancyTrim, OccupancyFilter
 from src.msa.msa import MSA, Muscle
 from src.hmm.hmmbuild import HMMBuild
@@ -9,8 +13,7 @@ from src.hmm.hmmalign import HMMAlign
 from src.hmm.hmmer import Tblout, Domtblout
 from src.hmm.hmmer import merge_scores, merge_hits
 from src.hmm.hmm import HMM
-from src.dataset import LinClust, Fasta
-from src.disorder import MobiDbLite
+
 from src.mgnifam import Cluster
 from src.utils import benchmark, is_gzip, gunzip, as_bytes
 from subprocess import CalledProcessError
@@ -203,16 +206,14 @@ class Build(Pipeline):
                 verbose=verbose
             )
 
-            # # Check compositional bias
-            # time_run, (cluster_names, _) = benchmark(
-            #     fn=self.check_comp_bias,
-            #     clusters_path=clusters_path,
-            #     bias_path=bias_path,
-            #     cluster_members=cluster_members,
-            #     fasta_sequences=fasta_sequences,
-            #     client=client,
-            #     verbose=verbose
-            # )
+            # Check compositional bias
+            # cluster_names, _) = benchmark(
+            self.check_comp_bias(
+                clusters_path=clusters_path,
+                bias_path=bias_path,
+                client=client,
+                verbose=verbose
+            )
 
             # Exit
             return
@@ -634,112 +635,219 @@ class Build(Pipeline):
             print('{:d} clusters'.format(len(cluster_members)))
 
     # Check compositional bias
-    def check_comp_bias(self, clusters_path, bias_path, cluster_members, fasta_sequences, client, verbose=False):
+    def check_comp_bias(self, clusters_path, bias_path, client, verbose=False):
         """ Check compositional bias
 
-        Given a cluster members dictionary and a fasta sequences dictionary,
-        makes clusters dict(cluster members: fasta sequences). Then makes
-        disorder predictions over the sequences: if rate of disordered residues
-        is too high, cluster is discarded
+        Loop through all clusters in given clusters path and runs MobiDB Lite
+        predictor over SEED.fa file (if any). Then computes compositional
+        bias over prediction results: if too high, then discard the cluster
+        sub-directory by moving it to bias folder.
+
+        Disorder predictions will be stored inside the cluster sub-folder
+        in mobidb.disorder file, while compositional bias value will be stored
+        in mobidb.bias file
 
         Args
-        cluster_members (dict)      Dictionary mappung cluster names to cluster
-                                    seqeunces accession numbers
-        fasta_sequences (dict)      Dictionary mapping seqeunces accession
-                                    numbers to fasta entries
+        clusters_path (str)         Path where clusters directory can be found
         client (Client)             Dask client used to submit jobs
         verbose (bool)              Wether to print verbose output or not
 
         Return
-        (dict)                      Input cluster entries above compositional
-                                    bias threshold
-        (dict)                      Input cluster entries below compositional
-                                    bias threshold
+        (dict)                      Dictionary mapping cluster name to
+                                    compositional bias
         """
+        # Intialize timers
+        time_beg, time_end = time(), 0.0
+        # Define clusters iterator
+        clusters_iter = glob(os.path.join(clusters_path, 'MGYP*'))
         # Verbose log
         if verbose:
-            print('Computing compositional bias', end=' ')
-            print('for {:d} clusters'.format(len(cluster_members)), end=' ')
-            print('and {:d} sequences'.format(len(fasta_sequences)))
+            print('Computing compositional bias for', end=' ')
+            print('{:d} clusters...'.format(len(clusters_iter)), end=' ')
 
         # Initialize futures dict(cluster name: compositional bias)
         futures = dict()
         # Loop through each cluster
-        for cluster_name in cluster_members:
+        for cluster_path in clusters_iter:
+            # Get cluster name
+            cluster_name = os.path.basename(cluster_path)
+            # Define fasta file path
+            fasta_path = os.path.join(cluster_path, 'SEED.fa')
+            # Check if SEED.fa file exists
+            if not os.path.isfile(fasta_path):
+                # Verbose
+                if verbose:
+                    print('Could not find source SEED.fa file', end=' ')
+                    print('for cluster {:s}'.format(cluster_name), end=' ')
+                    print('at {:s}: skipping it'.format(cluster_path))
+                # Skip iteration
+                continue
 
-            # Define a cluster sequences dict(sequence acc: fasta entry)
-            cluster_sequences = dict()
-            # Loop through each sequence accession in cluster
-            for acc in cluster_members.get(cluster_name):
-                # Retrieve fasta sequence
-                cluster_sequences[acc] = fasta_sequences[acc]
-
+            # # Define a cluster sequences dict(sequence acc: fasta entry)
+            # cluster_sequences = dict()
+            # # Loop through each sequence accession in cluster
+            # for acc in cluster_members.get(cluster_name):
+            #     # Retrieve fasta sequence
+            #     cluster_sequences[acc] = fasta_sequences[acc]
             # Run distributed compositional bias computation
             futures[cluster_name] = client.submit(
-                func=self.compute_comp_bias,
-                fasta_sequences=cluster_sequences,
-                pred_threshold=1,  # Set threshold for disorder prediction
-                pred_inclusive=True,  # Set thresold inclusive
+                func=self.predict_comp_bias,
+                fasta_path=fasta_path,  # Input file
+                # pred_threshold=1,  # Set threshold for disorder prediction
+                # pred_inclusive=True,  # Set thresold inclusive
                 mobidb=self.mobidb
             )
 
-        # Retrieve results
-        results = client.gather(futures)
-
-        # Initialize set of clusters below and above threshold
-        bias_below, bias_above = set(), set()
+        # Retrieve results dict(cluster name: comp bias)
+        clusters_bias = client.gather(futures)
         # Retrieve compositional bias threshold
         threshold = self.comp_bias_threshold
-        # Retrieve compositional bias threshold is inclusive or not
         inclusive = self.comp_bias_inclusive
-        # Loop through each cluster name in results
-        for cluster_name in results.keys():
-
-            # Define current cluster path
-            cluster_path = os.path.join(clusters_path, cluster_name)
-            # Encure that cluster path exists
-            if not os.path.isdir(cluster_path):
-                # Make new directory
-                os.mkdir(cluster_path)
-
+        # Loop through each cluster in cluster iterator
+        for cluster_path in clusters_iter:
+            # Retrieve cluster name
+            cluster_name = os.path.basename(cluster_path)
             # Retrieve cluster bias
-            cluster_bias = results.get(cluster_name, 1.0)
+            cluster_bias = clusters_bias[cluster_name]
 
-            # Write bias score to file
-            with open(os.path.join(cluster_path, 'BIAS'), 'w') as file:
-                file.write(str(cluster_bias))
+            # # Verbose
+            # if verbose:
+            #     print('  current cluster {:s}'.format(cluster_name), end=' ')
+            #     print('has compositional bias {:.0f}'.format(cluster_bias))
 
-            # Define target path if bias is too high
-            target_path = os.path.join(bias_path, cluster_name)
-            # Case compositional bias threshold is inclusive
-            if (cluster_bias >= threshold) and inclusive:
-                # Move cluster subfolder into BIAS folder
-                shutil.move(cluster_path, target_path)
-                # Add cluster name to the above threshold set
-                bias_above.add(cluster_name)
-                # Go to next iteration
+            # Case bias threshold is inclusive
+            if inclusive and cluster_bias < threshold:
+                # Skip iteration
                 continue
-            # Case compositional bias threshold is exclusive
-            if (cluster_bias > threshold) and not inclusive:
-                # Move cluster subfolder into BIAS folder
-                shutil.move(cluster_path, target_path)
-                # Add cluster name to the above threshold set
-                bias_above.add(cluster_name)
-                # Go to next iteration
+            # Case bias threshold is exclusive
+            if not inclusive and cluster_bias <= threshold:
+                # Skip iteration
                 continue
+            # Move cluster to bias directory
+            shutil.move(cluster_path, os.path.join(bias_path, cluster_name))
 
-            # By default, add cluster name to the below threshold set
-            bias_below.add(cluster_name)
+        # # Loop through each cluster
+        # for cluster_path in clusters_iter:
+        #     #
 
-        # Verbose log
+        # # Initialize set of clusters below and above threshold
+        # bias_below, bias_above = set(), set()
+        # # Retrieve compositional bias threshold
+        # threshold = self.comp_bias_threshold
+        # # Retrieve compositional bias threshold is inclusive or not
+        # inclusive = self.comp_bias_inclusive
+        # # Loop through each cluster name in results
+        # for cluster_name in results.keys():
+        #
+        #     # Define current cluster path
+        #     cluster_path = os.path.join(clusters_path, cluster_name)
+        #     # Encure that cluster path exists
+        #     if not os.path.isdir(cluster_path):
+        #         # Make new directory
+        #         os.mkdir(cluster_path)
+        #
+        #     # Retrieve cluster bias
+        #     cluster_bias = results.get(cluster_name, 1.0)
+        #
+        #     # Write bias score to file
+        #     with open(os.path.join(cluster_path, 'BIAS'), 'w') as file:
+        #         file.write(str(cluster_bias))
+        #
+        #     # Define target path if bias is too high
+        #     target_path = os.path.join(bias_path, cluster_name)
+        #     # Case compositional bias threshold is inclusive
+        #     if (cluster_bias >= threshold) and inclusive:
+        #         # Move cluster subfolder into BIAS folder
+        #         shutil.move(cluster_path, target_path)
+        #         # Add cluster name to the above threshold set
+        #         bias_above.add(cluster_name)
+        #         # Go to next iteration
+        #         continue
+        #     # Case compositional bias threshold is exclusive
+        #     if (cluster_bias > threshold) and not inclusive:
+        #         # Move cluster subfolder into BIAS folder
+        #         shutil.move(cluster_path, target_path)
+        #         # Add cluster name to the above threshold set
+        #         bias_above.add(cluster_name)
+        #         # Go to next iteration
+        #         continue
+        #
+        #     # By default, add cluster name to the below threshold set
+        #     bias_below.add(cluster_name)
+
+        # Update timers
+        time_end = time()
+        # Verbose
         if verbose:
-            print('Compositional bias computed for {:d} clusters'.format(len(cluster_members)), end=' ')
-            print('among which {:d} were below'.format(len(bias_below)), end=' ')
-            print('threshold of {:.02f},'.format(self.comp_bias_threshold), end=' ')
-            print('while {:d} were above it'.format(len(bias_above)))
+            # Show execution time
+            print('done in {:.0f} seconds'.format(time_end - time_beg))
 
-        # Return both below and above threshold sets
-        return bias_below, bias_above
+            # Compute number of clusters above that threshold
+            clusters_above = sum([
+                int((b >= threshold and inclusive) or (b > threshold))
+                for b in clusters_bias.values()
+            ])
+            # Compute number of clusters below that threshold
+            clusters_below = sum([
+                int((b < threshold and inclusive) or (b <= threshold))
+                for b in clusters_bias.values()
+            ])
+            # # Show compositional bias
+            print('Compositional bias threshold is {:.2f}:'.format(threshold))
+            print('  {:d} clusters are above it'.format(clusters_above))
+            print('  {:d} clusters are below it'.format(clusters_below))
+
+        # # Verbose log
+        # if verbose:
+        #     print('Compositional bias computed for {:d} clusters'.format(len(cluster_members)), end=' ')
+        #     print('among which {:d} were below'.format(len(bias_below)), end=' ')
+        #     print('threshold of {:.02f},'.format(self.comp_bias_threshold), end=' ')
+        #     print('while {:d} were above it'.format(len(bias_above)))
+        #
+        # # Return both below and above threshold sets
+        # return bias_below, bias_above
+
+    @staticmethod
+    def predict_comp_bias(fasta_path, mobidb, pred_threshold=1, pred_inclusive=True):
+
+        # Define path to current cluster directory
+        cluster_path = os.path.dirname(fasta_path)
+        # Define path to output file
+        out_path = os.path.join(cluster_path, 'MOBIDB.out')
+        # Define path to BIAS file
+        bias_path = os.path.join(cluster_path, 'MOBIDB.bias')
+
+        # Define fasta sequences dict(acc: fasta entry)
+        fasta_sequences = dict()
+        # Open fasta file
+        with open(fasta_path, 'r') as fasta_file:
+            # Iterate fasta sequences
+            for entry in fasta_iter(fasta_file):
+                # Split fasta entry into header and residues
+                head, _ = tuple(entry.split('\n'))
+                # Retrieve accession out of header
+                acc = re.search(r'^>(\S+)', head).group(1)
+                # Store fasta sequence
+                fasta_sequences.setdefault(acc, entry)
+
+        # Just run MobiDB Lite predictor
+        mobidb.run(fasta_path=fasta_path, out_path=out_path)
+        # Parse results
+        disorder = mobidb.parse(out_path)
+        # Compute compositional bias
+        comp_bias = disorder.comp_bias(
+            fasta_sequences=fasta_sequences,
+            threshold=pred_threshold,
+            inclusive=pred_inclusive
+        )
+
+        # Write out bias file
+        with open(bias_path, 'w') as bias_file:
+            # Write out bias
+            bias_file.write('{:f}'.format(comp_bias))
+
+        # Return compositional bias
+        return comp_bias
 
     @staticmethod
     def compute_comp_bias(fasta_sequences, mobidb, pred_threshold=1, pred_inclusive=True):
@@ -768,14 +876,14 @@ class Build(Pipeline):
         """
         # Make predictions running MobiDB Lite
         predictions = mobidb.run(fasta_sequences=fasta_sequences)
-        # Apply threshold over predictions
-        predictions = mobidb.apply_threshold(
-            sequences=predictions,
-            threshold=pred_threshold,
-            inclusive=pred_inclusive
-        )
-        # Compute and return compositional bias
-        return mobidb.compute_bias(predictions)
+        # # Apply threshold over predictions
+        # predictions = mobidb.apply_threshold(
+        #     sequences=predictions,
+        #     threshold=pred_threshold,
+        #     inclusive=pred_inclusive
+        # )
+        # # Compute and return compositional bias
+        # return mobidb.compute_bias(predictions)
 
     # Make SEED alignments
     def make_seed_alignments(self, cluster_members, fasta_sequences, clusters_path, client, verbose=False):
