@@ -1,5 +1,6 @@
 # Dependencies
 from src.pipeline.pipeline import Pipeline
+from src.scheduler import LSFScheduler, LocalScheduler
 from src.msa.transform import Compose, OccupancyTrim, OccupancyFilter
 from src.msa.msa import MSA, Muscle
 from src.hmm.hmmer import HMMBuild, HMMAlign
@@ -15,8 +16,10 @@ from subprocess import CalledProcessError
 from tempfile import NamedTemporaryFile
 from glob import glob
 from time import time
+import argparse
 import shutil
 import random
+import json
 import math
 import os
 import re
@@ -34,7 +37,8 @@ class Build(Pipeline):
     # Constructor
     def __init__(
         # Pipeline parameters, required to handle job scheduling
-        self, cluster_type, cluster_kwargs,
+        # self, cluster_type, cluster_kwargs,
+        self, scheduler,
         # Path to datasets (fixed)
         linclust_path, mgnifam_path, uniprot_path,
         # Compositional bias threshold settings
@@ -51,9 +55,9 @@ class Build(Pipeline):
         # Command line arguments
         mobidb_cmd=['mobidb_lite.py'],  # Path to MobiDB Lite predictor
         muscle_cmd=['muscle'],  # Path to Muscle alignment algorithm
-        hmm_build_cmd=['hmmbuild'],  # Path to hmmbuild script
-        hmm_align_cmd=['hmmalign'],  # Path to hmmalign script
-        hmm_search_cmd=['hmmsearch'],  # Path to hmmsearch script
+        hmmbuild_cmd=['hmmbuild'],  # Path to hmmbuild script
+        hmmalign_cmd=['hmmalign'],  # Path to hmmalign script
+        hmmsearch_cmd=['hmmsearch'],  # Path to hmmsearch script
         # Environmental variables
         env=os.environ.copy()
     ):
@@ -98,9 +102,11 @@ class Build(Pipeline):
         # Define scripts interfaces
         self.mobidb = MobiDbLite(cmd=mobidb_cmd, env=env)
         self.muscle = Muscle(cmd=muscle_cmd, env=env)
-        self.hmm_build = HMMBuild(cmd=hmm_build_cmd, env=env)
-        self.hmm_align = HMMAlign(cmd=hmm_align_cmd, env=env)
-        self.hmm_search = HMMSearch(cmd=hmm_search_cmd, env=env)
+        self.hmmbuild = HMMBuild(cmd=hmmbuild_cmd, env=env)
+        self.hmmalign = HMMAlign(cmd=hmmalign_cmd, env=env)
+        self.hmmsearch = HMMSearch(cmd=hmmsearch_cmd, env=env)
+        # Save scheduler
+        self.scheduler = scheduler
         # Store environmental variables
         self.env = env
 
@@ -135,18 +141,24 @@ class Build(Pipeline):
         # Initialize sub-directories
         bias_path, noaln_path, uniprot_path = self.init_subdir(clusters_path)
 
-        # Initialize new cluster
-        cluster, client = self.get_client(dict(cores=1))
-        # Request jobs
-        cluster.adapt(minimum=min_jobs, maximum=max_jobs)
+        # # Initialize new cluster
+        # cluster, client = self.get_client(dict(cores=1))
+        # # Request jobs
+        # cluster.adapt(minimum=min_jobs, maximum=max_jobs)
 
-        # Fill cluster members dictionary
-        time_run, cluster_members = benchmark(
-            fn=self.search_cluster_members,
-            cluster_names=cluster_names,
-            client=client,
-            verbose=False
-        )
+        # Open new client
+        with self.scheduler.adapt(min_jobs, max_jobs) as client:
+
+            # Fill cluster members dictionary
+            time_run, cluster_members = benchmark(
+                fn=self.search_cluster_members,
+                cluster_names=cluster_names,
+                client=client,
+                verbose=False
+            )
+
+            # Exit
+            return
 
         # Check cluster members
         self.check_cluster_members(cluster_names, cluster_members)
@@ -1836,58 +1848,342 @@ def get_cluster_names(paths, shuffle=False):
     return cluster_names
 
 
-# Test
+# Utility: get environmental variables
+def parse_env_json(path):
+    # Case environment .json file path does not exist
+    if not os.path.isfile(path):
+        # Raise error
+        raise FileNotFoundError(' '.join([
+            'could not open environmental variables file',
+            'at %s: file not found'.format(path)
+        ]))
+
+    # Initialize environmental variables dictionary
+    env = dict()
+    # Open environmental variables file
+    with open(path, 'r') as file:
+        # Load variables dictionary from file
+        env = json.load(file)
+        # Loop through every key in retrieved dictionary
+        for key, value in env.items():
+            # Case calue is not a list
+            if isinstance(value, list):
+                # Join list as string, using double dots as separators
+                env[key] = ':'.join(value)
+
+    # Return environmental variables dictionary
+    return env
+
+
+# Run batch pipeline
 if __name__ == '__main__':
 
-    # Define root path
+    # Define project root path
     ROOT_PATH = os.path.dirname(__file__) + '/../..'
+    # Define path to data folder
+    DATA_PATH = ROOT_PATH + '/data'
+    # Define path to LinClust file(s)
+    LINCLUST_PATH = DATA_PATH + '/clusters/chunk*.tsv.gz'
+    # Define path to MGnifam file(s)
+    MGNIFAM_PATH = DATA_PATH + '/mgnify/chunk*.fa.gz'
+    # Define path to UniProt file(s)
+    UNIPROT_PATH = DATA_PATH + '/uniprot/chunk*.fa.gz'
 
-    # Initialize scores
-    scores = list()
-    # Define TBLOUT iterator
-    tblout_iter = glob(ROOT_PATH + '/tmp/release2/batches/0/MGYP*/*.domtblout')
-    # # DEBUG
-    # print(tblout_iter)
-    # Go through all sample tblout paths
-    for i, tblout_path in enumerate(tblout_iter):
-        # Retrieve scores
-        scores.append(Build.parse_search_scores(
-            tblout_path=tblout_path,
-            tblout_type='domains',
-            e_value=0.001,
-            min_bits=25.0,
-            max_bits=999999.99
-        ))
-        # # Print scores
-        # print('{:d}-th scores:\n'.format(i+1), scores[-1])
-        # print()
-    # Merge scores together
-    scores = merge_scores(*scores)
+    # Argparse
+    parser = argparse.ArgumentParser(description='Build MGnifam clusters')
+    # Define input path(s)
+    parser.add_argument(
+        '-i', '--in_path', nargs='+', type=str, required=True,
+        help='Path to input .tsv file(s), ccluster name is first column'
+    )
+    # Define output path
+    parser.add_argument(
+        '-o', '--out_path', type=str, required=True,
+        help='Path to output directory'
+    )
+    # Define author name
+    parser.add_argument(
+        '-a', '--author_name', type=str, default='Anonymous',
+        help='Name of the user running MGnifam build pipeline'
+    )
+    # Wether to shuffle input or not
+    parser.add_argument(
+        '--shuffle', type=int, default=0,
+        help='Whether to shuffle input cluster names or not'
+    )
+    # Define batch size
+    parser.add_argument(
+        '--batch_size', type=int, default=100,
+        help='Number of clusters to make at each iteration'
+    )
+    # Define maximum number of clusters to make
+    parser.add_argument(
+        '--max_clusters', type=int, default=0,
+        help='Maximum number of clusters to make'
+    )
+    # Define path to LinClust clusters file(s)
+    parser.add_argument(
+        '--linclust_path', nargs='+', type=str, default=glob(LINCLUST_PATH),
+        help='Path to LinClust clusters file(s)'
+    )
+    # Define path to MGnifam file(s)
+    parser.add_argument(
+        '--mgnifam_path', nargs='+', type=str, default=glob(MGNIFAM_PATH),
+        help='Path to MGnifam file(s)'
+    )
+    # Define MGnifam width (maximum sequence length)
+    parser.add_argument(
+        '--mgnifam_width', type=int, required=False,
+        help='Maximum sequence length in MGnifam dataset'
+    )
+    # Define MGnifam height (total number of sequences)
+    parser.add_argument(
+        '--mgnifam_height', type=int, required=False,
+        help='Total number of sequences in MGnifam dataset'
+    )
+    # Define path to UniProt file(s)
+    parser.add_argument(
+        '--uniprot_path', nargs='+', type=str, default=glob(UNIPROT_PATH),
+        help='Path to UniProt file(s)'
+    )
+    # Define UniProt width (maximum sequence length)
+    parser.add_argument(
+        '--uniprot_width', type=int, required=False,
+        help='Maximum sequence length in UniProt dataset'
+    )
+    # Define UniProt height (total number of sequences)
+    parser.add_argument(
+        '--uniprot_height', type=int, required=False,
+        help='Total number of sequences in UniProt dataset'
+    )
+    # Define MobiDB executable
+    parser.add_argument(
+        '--mobidb_cmd', nargs='+', type=str, default=['mobidb_lite.py'],
+        help='MobiDB Lite disorder predictor executable'
+    )
+    # Define Muscle executable
+    parser.add_argument(
+        '--muscle_cmd', nargs='+', type=str, default=['muscle'],
+        help='Muscle multiple sequence aligner executable'
+    )
+    # Define hmmsearch executable
+    parser.add_argument(
+        '--hmmsearch_cmd', nargs='+', type=str, default=['hmmsearch'],
+        help='HMMER3 search executable'
+    )
+    # Define hmmbuild executable
+    parser.add_argument(
+        '--hmmbuild_cmd', nargs='+', type=str, default=['hmmbuild'],
+        help='HMMER3 build executable'
+    )
+    # Define hmmalign executable
+    parser.add_argument(
+        '--hmmalign_cmd', nargs='+', type=str, default=['hmmalign'],
+        help='HMMER3 align executable'
+    )
+    # Whether to print verbose output
+    parser.add_argument(
+        '-v', '--verbose', type=int, default=1,
+        help='Print verbose output'
+    )
+    # Define E-value significance threshold for both UniProt and MGnifam
+    parser.add_argument(
+        '-e', '--e_value', type=float, default=0.01,
+        help='E-value threhsold for both UniProt and MGnifam comparisons'
+    )
+    # Define environmental variables .json file
+    parser.add_argument(
+        '--env_path', type=str, required=False,
+        help='Path to .json file holding environmental variables'
+    )
+    # Define scheduler options
+    group = parser.add_argument_group('Scheduler options')
+    # Define schduler type
+    group.add_argument(
+        '-s', '--scheduler_type', type=str, default='LSF',
+        help='Type of scheduler to use to distribute parallel processes'
+    )
+    # Define minimum number of jobs
+    group.add_argument(
+        '-j', '--min_jobs', type=int, default=0,
+        help='Minimum number of parallel processes to keep alive'
+    )
+    # Define maximum number of jobs
+    group.add_argument(
+        '-J', '--max_jobs', type=int, default=100,
+        help='Maximum number of parallel processes to keep alive'
+    )
+    # Define minimum number of cores
+    group.add_argument(
+        '-c', '--min_cores', type=int, default=1,
+        help='Minimum number of cores to use per process'
+    )
+    # Define maximum number of cores
+    group.add_argument(
+        '-C', '--max_cores', type=int, default=1,
+        help='Maximum number of cores to use per process'
+    )
+    # Define minimum memory allocable per job
+    group.add_argument(
+        '-m', '--min_memory', type=str, default='2 GB',
+        help='Minimum memory allocable per process'
+    )
+    # Define maximum memory allocable per job
+    group.add_argument(
+        '-M', '--max_memory', type=str, default='4 GB',
+        help='Maximum memory allocable per process'
+    )
+    # Define walltime
+    group.add_argument(
+        '-W', '--walltime', type=str, default='02:00',
+        help='How long can a process be kept alive'
+    )
+    # Retrieve arguments
+    args = parser.parse_args()
 
-    # Show results
-    print('Scores:')
-    for cluster_name, cluster_score in scores.items():
-        print(cluster_name, cluster_score)
-    print()
+    # Initialize scheduler
+    scheduler = None
+    # Case scheduler type is LSF
+    if args.scheduler_type == 'LSF':
+        # Define LSF scheduler
+        scheduler = LSFScheduler(
+            # Define cores boundaries
+            min_cores=args.min_cores,
+            max_cores=args.max_cores,
+            # Define memory boundaries
+            min_memory=args.min_memory,
+            max_memory=args.max_memory,
+            # Debug
+            silence_logs='debug',
+            # Define walltime
+            walltime=args.walltime,
+            # Define processes per job
+            processes=1
+        )
+    # Case scheduler type is Local
+    if args.scheduler_type == 'Local':
+        # Define Local scheduler
+        scheduler = LocalScheduler(
+            # Define cores boundaries
+            min_cores=args.min_cores,
+            max_cores=args.max_cores,
+            # Define memory boundaries
+            min_memory=args.min_memory,
+            max_memory=args.max_memory,
+            # Define processes per job
+            threads_per_worker=1
+        )
+    # Case no scheduler has been set
+    if scheduler is None:
+        # Raise new error
+        raise ValueError(' '.join([
+            'scheduler type can be one among `Local` or `LSF`',
+            '%s has been chosen instead' % args.scheduler_type
+        ]))
 
-    # Initialize hits
-    hits = list()
-    # Go through all sample tblout paths
-    for tblout_path in tblout_iter:
-        # Retrieve hits
-        hits.append(Build.parse_search_hits(
-            tblout_path=tblout_path,
-            tblout_type='domains',
-            scores=scores
-        ))
-        # # Print latest retrieved hits
-        # print('{:d}-th hits\n'.format(), hits[-1])
-        # print()
-    # Merge hits together
-    hits = merge_hits(*hits)
+    # Get cluster names list
+    cluster_names = get_cluster_names(
+        paths=args.in_path,
+        shuffle=args.shuffle
+    )
 
-    # Show results
-    print('Hits:')
-    for cluster_name, cluster_members in hits.items():
-        print(cluster_name, cluster_members)
-    print()
+    # Load environmental variables
+    env = os.environ.copy()
+    # Case environmental variable file is set
+    if args.env_path:
+        # Update environmental variables using given file file
+        env = {**env, **parse_env_json(args.env_path)}
+
+    # Try making release directory
+    try:
+        # Case output directory does not exist
+        if not os.path.isdir(args.out_path):
+            # Make output directory
+            os.mkdir(args.out_path)
+
+    except OSError:
+        # Raise new error
+        raise OSError(' '.join([
+            'could not create output directory',
+            'at %s:' % args.out_path,
+            'permission denied'
+        ]))
+
+    # # Load dataset chunks
+    # linclust_chunks = LinClust.from_list(args.linclust_path)
+    # mgnifam_chunks = Fasta.from_list(args.mgnifam_path)
+    # uniprot_chunks = Fasta.from_list(args.uniprot_path)
+
+    # Define new build pipeline
+    build = Build(
+        # Set scheduler
+        scheduler=scheduler,
+        # Path to datasets (fixed)
+        linclust_path=args.linclust_path,
+        mgnifam_path=args.mgnifam_path,
+        uniprot_path=args.uniprot_path,
+        # Compositional bias threshold settings
+        comp_bias_threshold=0.2, comp_bias_inclusive=True,
+        # Automatic trimming settings
+        trim_threshold=0.4, trim_inclusive=True,
+        filter_threshold=0.5, filter_inclusive=True,
+        # Post trimming settings
+        seed_min_width=1, seed_min_height=1,
+        # Search against UniProt settings
+        uniprot_e_value=args.e_value,
+        uniprot_height=args.uniprot_height,
+        uniprot_width=args.uniprot_width,
+        # Search against MGnifam settings
+        mgnifam_e_value=args.e_value,
+        mgnifam_height=args.mgnifam_height,
+        mgnifam_width=args.mgnifam_width,
+        # Command line arguments
+        mobidb_cmd=args.mobidb_cmd,  # Path to MobiDB Lite predictor
+        muscle_cmd=args.muscle_cmd,  # Path to Muscle alignment algorithm
+        hmmbuild_cmd=args.hmmbuild_cmd,  # Path to hmmbuild script
+        hmmsearch_cmd=args.hmmsearch_cmd,  # Path to hmmsearch script
+        hmmalign_cmd=args.hmmalign_cmd,  # Path to hmmalign script
+        # Environmental variables
+        env=env
+    )
+
+    # Define number of clusters
+    num_clusters = len(cluster_names)
+    # Threshold number of clusters
+    num_clusters = min(num_clusters, args.max_clusters)
+    # Define batchs size
+    batch_size = args.batch_size
+    # Loop through batches of input cluster names
+    for i in range(0, num_clusters, batch_size):
+        # Define last index of current batch (excluded)
+        j = min(num_clusters, i + batch_size)
+        # Define batch index
+        batch_index = str(i // batch_size)
+        # Define directory for current batch
+        batch_path = os.path.join(args.out_path, 'batch', batch_index)
+
+        # Try making output directory
+        try:
+            # Make directory for current batch
+            os.makedirs(batch_path, exist_ok=True)
+
+        # Intercept exception
+        except OSError:
+            # Raise exception
+            raise OSError(' '.join([
+                'could not make batch directory',
+                'at %s:'.format(batch_path),
+                'permission denied'
+            ]))
+
+        # Define batch of cluster names
+        batch_names = cluster_names[i:j]
+        # Run pipeline for current batch of cluster names
+        build(
+            author_name=args.author_name,
+            cluster_names=batch_names,
+            clusters_path=batch_path,
+            min_jobs=args.min_jobs,
+            max_jobs=args.max_jobs,
+            verbose=bool(args.verbose)
+        )
