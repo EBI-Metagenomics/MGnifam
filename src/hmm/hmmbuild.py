@@ -1,3 +1,9 @@
+# Dependencies
+from src.hmm.hmmer import HMMER
+import subprocess
+import os
+
+
 class HMMBuild(HMMER):
 
     # Set available alphabets

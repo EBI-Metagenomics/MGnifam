@@ -3,12 +3,13 @@ from src.pipeline.pipeline import Pipeline
 from src.scheduler import LSFScheduler, LocalScheduler
 from src.msa.transform import Compose, OccupancyTrim, OccupancyFilter
 from src.msa.msa import MSA, Muscle
-from src.hmm.hmmer import HMMBuild, HMMAlign
-from src.hmm.hmmsearch import HMMSearch, Tblout, Domtblout
-from src.hmm.hmmsearch import merge_scores, merge_hits
+from src.hmm.hmmbuild import HMMBuild
+from src.hmm.hmmsearch import HMMSearch
+from src.hmm.hmmalign import HMMAlign
+from src.hmm.hmmer import Tblout, Domtblout
+from src.hmm.hmmer import merge_scores, merge_hits
 from src.hmm.hmm import HMM
-from src.dataset import LinClust
-from src.dataset import Fasta
+from src.dataset import LinClust, Fasta
 from src.disorder import MobiDbLite
 from src.mgnifam import Cluster
 from src.utils import benchmark, is_gzip, gunzip, as_bytes
@@ -61,8 +62,6 @@ class Build(Pipeline):
         # Environmental variables
         env=os.environ.copy()
     ):
-        # Call parent constructor
-        super().__init__(cluster_type, cluster_kwargs)
         # Save datasets path
         self.linclust = LinClust.from_list(linclust_path)
         self.mgnifam = Fasta.from_list(mgnifam_path)
@@ -150,67 +149,73 @@ class Build(Pipeline):
         with self.scheduler.adapt(min_jobs, max_jobs) as client:
 
             # Fill cluster members dictionary
-            time_run, cluster_members = benchmark(
-                fn=self.search_cluster_members,
+            cluster_members = self.search_cluster_members(
                 cluster_names=cluster_names,
                 client=client,
-                verbose=False
+                verbose=verbose
             )
+
+            # Check cluster members
+            self.check_cluster_members(cluster_names, cluster_members)
+
+            # Initialize set of retrieved sequence accession numbers
+            sequences_acc = set()
+            # Loop through each cluster
+            for members_acc in cluster_members.values():
+                # Update sequence accession numbers
+                sequences_acc |= set(members_acc)
+
+            # Get number of clusters
+            num_clusters = len(cluster_members)
+            # Get number of sequences
+            num_sequences = sum([len(c) for c in cluster_members.values()])
+
+            # # Verbose log
+            # if verbose:
+            #     print('Retrieved {:d} accession numbers'.format(num_sequences), end=' ')
+            #     print('for {:d} clusters'.format(num_clusters), end=' ')
+            #     print('in {:.0f} seconds'.format(time_run))
+
+            # Fill mgnifam dictionary
+            fasta_sequences, _ = self.search_fasta_sequences(
+                sequences_acc=sequences_acc,
+                fasta_dataset=self.mgnifam,
+                client=client,
+                verbose=verbose
+            )
+
+            # # Define number of sequences
+            # num_sequences = len(fasta_sequences)
+            #
+            # # Verbose log
+            # if verbose:
+            #     print('Retrieved {:d} FASTA'.format(num_sequences), end=' ')
+            #     print('sequences in {:.0f} seconds'.format(time_run))
+
+            # Check fasta sequences
+            self.check_fasta_sequences(sequences_acc, fasta_sequences)
+
+            # Make clusters directories and SEED.fa fasta files
+            self.make_seed_sources(
+                clusters_path=clusters_path,
+                cluster_members=cluster_members,
+                fasta_sequences=fasta_sequences,
+                verbose=verbose
+            )
+
+            # # Check compositional bias
+            # time_run, (cluster_names, _) = benchmark(
+            #     fn=self.check_comp_bias,
+            #     clusters_path=clusters_path,
+            #     bias_path=bias_path,
+            #     cluster_members=cluster_members,
+            #     fasta_sequences=fasta_sequences,
+            #     client=client,
+            #     verbose=verbose
+            # )
 
             # Exit
             return
-
-        # Check cluster members
-        self.check_cluster_members(cluster_names, cluster_members)
-
-        # Initialize set of retrieved sequence accession numbers
-        sequences_acc = set()
-        # Loop through each cluster
-        for members_acc in cluster_members.values():
-            # Update sequence accession numbers
-            sequences_acc |= set(members_acc)
-
-        # Get number of clusters
-        num_clusters = len(cluster_members)
-        # Get number of sequences
-        num_sequences = sum([len(c) for c in cluster_members.values()])
-
-        # Verbose log
-        if verbose:
-            print('Retrieved {:d} accession numbers'.format(num_sequences), end=' ')
-            print('for {:d} clusters'.format(num_clusters), end=' ')
-            print('in {:.0f} seconds'.format(time_run))
-
-        # Fill mgnifam dictionary
-        time_run, (fasta_sequences, _) = benchmark(
-            fn=self.search_fasta_sequences,
-            sequences_acc=sequences_acc,
-            fasta_dataset=self.mgnifam,
-            client=client,
-            verbose=verbose
-        )
-
-        # Check fasta sequences
-        self.check_fasta_sequences(sequences_acc, fasta_sequences)
-
-        # Define number of sequences
-        num_sequences = len(fasta_sequences)
-
-        # Verbose log
-        if verbose:
-            print('Retrieved {:d} FASTA'.format(num_sequences), end=' ')
-            print('sequences in {:.0f} seconds'.format(time_run))
-
-        # Check compositional bias
-        time_run, (cluster_names, _) = benchmark(
-            fn=self.check_comp_bias,
-            clusters_path=clusters_path,
-            bias_path=bias_path,
-            cluster_members=cluster_members,
-            fasta_sequences=fasta_sequences,
-            client=client,
-            verbose=verbose
-        )
 
         # Keep only clusters whose bias is below threshold
         cluster_members = {
@@ -440,10 +445,12 @@ class Build(Pipeline):
         (dict)                      Mapping cluster names (keys) to set of
                                     sequence accession numbers (values)
         """
-        # Verbose log
+        # Initialize timers
+        time_beg, time_end = time(), 0.0
+        # Verbose
         if verbose:
-            print('Searching member sequences', end=' ')
-            print('for {:d} clusters'.format(len(cluster_names)))
+            print('Searching member sequences for', end=' ')
+            print('{:d} clusters...'.format(len(cluster_names)), end=' ')
 
         # Initialize futures
         futures = list()
@@ -468,10 +475,12 @@ class Build(Pipeline):
                 # Update cluster members list
                 cluster_members[cluster_name] |= set(results[i][cluster_name])
 
-        # Verbose log
+        # Update timers
+        time_end = time()
+        # Verbose
         if verbose:
-            print('Retrieved sequences', end=' ')
-            print('for {:d} clusters'.format(len(cluster_members)))
+            # Print execution time
+            print('done in {:.0f} seconds'.format(time_end - time_beg))
 
         # Return cluster members
         return cluster_members
@@ -507,10 +516,12 @@ class Build(Pipeline):
                                     (values)
         (int)                       Total length of input FASTA dataset
         """
+        # Initialize timers
+        time_beg, time_end = time(), 0.0
         # Verbose log
         if verbose:
             print('Searching {:d}'.format(len(sequences_acc)), end=' ')
-            print('FASTA sequences')
+            print('fasta sequences...', end=' ')
 
         # Initialize futures
         futures = list()
@@ -538,10 +549,15 @@ class Build(Pipeline):
             # Update length of FASTA file
             fasta_length = fasta_length + chunk_length
 
-        # Verbose log
+        # Update timers
+        time_end = time()
+        # Verbose
         if verbose:
+            # Print time
+            print('done in {:.0f} seconds'.format(time_end - time_beg))
+            # Print results size
             print('Retrieved {:d} fasta'.format(len(fasta_sequences)), end=' ')
-            print('entries from dataset of size {}'.format(fasta_length))
+            print('entries from dataset of size {:d}'.format(fasta_length))
 
         # Return either the sequences dictionary and the dataset length
         return fasta_sequences, fasta_length
@@ -558,6 +574,64 @@ class Build(Pipeline):
                     '{} has no associated fasta entry:'.format(sequence_acc),
                     'aborting pipeline execution'
                 ]))
+
+    # Make clusters directories and write SEED.fa files
+    def make_seed_sources(self, clusters_path, cluster_members, fasta_sequences, verbose=False):
+        """ Make cluster source files (SEED.fa)
+
+        Loop through all cluster names (keys) in cluster members dictionary:
+        for each cluster member, retrieve the associated fasta entry in given
+        fasta dictionary.
+
+        If a cluster directory does not exist, tries to make a new one.
+
+        Args
+        clusters_path (str)         Path where clusters directory can be found
+        cluster_members (dict)      Dictionary mapping cluster names to cluster
+                                    members (i.e. sequence accession numbers)
+        fasta_sequences (dict)      Dictionary mapping sequence accession
+                                    numbers to fasta entries
+        verbose (bool)              Whether to show verbose log
+
+        Raise
+        (OSError)                   In case problems occurred while making
+                                    new directories and files
+        """
+        # Loop through each cluster name
+        for cluster_name in cluster_members:
+            # Try to instantiate directory
+            try:
+                # Define cluster path
+                cluster_path = os.path.join(clusters_path, cluster_name)
+                # Define SEED.fa file path
+                fasta_path = os.path.join(cluster_path, 'SEED.fa')
+
+                # Check if directory already exists
+                if not os.path.isdir(cluster_path):
+                    # Try making new directory
+                    os.mkdir(cluster_path)
+
+                # Make SEED.fa file
+                with open(fasta_path, 'w') as fasta_file:
+                    # Loop through each sequence accession in clurrent cluster
+                    for acc in cluster_members[cluster_name]:
+                        # Retrieve fasta entry from sequences dictionary
+                        fasta_entry = fasta_sequences[acc]
+                        # Write fasta entry to file
+                        fasta_file.write(fasta_entry + '\n')
+
+            except OSError:
+                # Raise
+                raise OSError(' '.join([
+                    'could not make cluster at',
+                    '{:s}:'.format(cluster_path),
+                    'aborting execution'
+                ]))
+
+        # Verbose
+        if verbose:
+            print('Source SEED.fa done for all the', end=' ')
+            print('{:d} clusters'.format(len(cluster_members)))
 
     # Check compositional bias
     def check_comp_bias(self, clusters_path, bias_path, cluster_members, fasta_sequences, client, verbose=False):

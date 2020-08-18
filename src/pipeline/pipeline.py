@@ -3,9 +3,6 @@ import json
 import sys
 import os
 
-# Dask
-from dask.distributed import Client
-
 
 class Pipeline(object):
 

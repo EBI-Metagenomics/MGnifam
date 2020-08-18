@@ -229,6 +229,57 @@ class Domtblout(Tblout):
     }
 
 
+# Utility: merge scores dictionary
+def merge_scores(*args):
+    # Initialize scores dict(query name: (TC, NC, GA))
+    scores = dict()
+    # Loop through each given score dictionary
+    for i in range(len(args)):
+        # Loop through every query name in current scores dict
+        for query_name in args[i]:
+
+            # Retrieve previous score tuple
+            prev_score = scores.setdefault(query_name, args[i][query_name])
+            # Retrieve previous TC, NC, GA
+            prev_tc, prev_nc, prev_ga = prev_score
+
+            # Retrieve current TC, NC, GA
+            curr_tc, curr_nc, curr_ga = args[i][query_name]
+
+            # Set new TC: minimum between current and previous
+            curr_tc = max(curr_tc, prev_tc)
+            # Set new NC: maximum between current and previous
+            curr_nc = min(curr_nc, prev_nc)
+            # Ensure that current NC is not higher than current TC
+            curr_nc = min(curr_tc, curr_nc)
+            # Compute new gathering threshold (GA)
+            curr_ga = min(25.0, curr_nc + ((curr_tc - curr_nc) / 2))
+
+            # Store new triple (TC, NC, GA)
+            scores[query_name] = (curr_tc, curr_nc, curr_ga)
+
+    # Return merged scores dictionary
+    return scores
+
+
+# Utility: merge hits dictionary
+def merge_hits(*args):
+    # Initialize hits dict(query name: set of target names)
+    hits = dict()
+    # Loop through each given hit dictionary
+    for i in range(len(args)):
+        # Loop through every query name in current dictionary
+        for query_name in args[i]:
+            # Loop through each target name for current query name
+            for target_name in args[i][query_name]:
+                # Store current query name
+                hits.setdefault(query_name, set())
+                # Store current target name
+                hits[query_name].add(target_name)
+    # Return merged hits dictionary
+    return hits
+
+
 # Unit testing
 if __name__ == '__main__':
 
