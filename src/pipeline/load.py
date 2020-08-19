@@ -37,7 +37,21 @@ class Load(object):
         self.env = env
 
     # Run pipeline
-    def run(self, clusters_path, mgnifam_version, verbose=False):
+    def run(self, clusters_iter, mgnifam_version, verbose=False):
+        """ Load clusters to MGnifam database
+
+        First, iterate through each given cluster path and load it into MGnifam
+        dataset. Then, chech MGnifam dataset for intersections among clusters.
+
+        Note: either insertions and checks are done inside the same
+        transaction. If some error happens, database is rollback to previous
+        state.
+
+        Args
+        clusters_iter (list)        List of cluster directories paths
+        mgnifam_version (str)       String for mgnifam version
+        verbose (bool)              Whether to print out verbose log
+        """
 
         # Try to make new release
         try:
@@ -45,11 +59,11 @@ class Load(object):
             # Connect to database
             self.mgnifam_db.connect()
 
-            # Retrieve clusters dictionary (accession: cluster)
-            clusters = self.get_clusters(clusters_path, verbose=verbose)
-
             # Load each cluster in database
-            self.load_clusters(clusters, verbose=verbose)
+            self.load_clusters(
+                clusters_iter,
+                verbose=verbose
+            )
 
             # # Initialize sequence and domain scores dictionary
             # sequence_scores = dict()
@@ -110,57 +124,87 @@ class Load(object):
             # Go on raising exception
             raise
 
-    def get_clusters(self, clusters_path, verbose=False):
-        """ Initialize clusters dictionary
+    # def get_clusters(self, clusters_path, verbose=False):
+    #     """ Initialize clusters dictionary
+    #
+    #     Loop through each cluster directory in given clusters path.
+    #     Moreover, it checks for foundamental files: HMM model file, domain
+    #     hits against MGnifam and SEED alignment and ALIGN full alignment.
+    #
+    #     Args
+    #     clusters_path (str)         Path where clusters DESC files are stored
+    #     verbose (bool)              Wether to print verbose output
+    #
+    #     Return
+    #     (dict)                      Dictionary mapping cluster name to cluster
+    #                                 instance
+    #     """
+    #     # Initialize clusters dictionary (accession: cluster)
+    #     clusters = dict()
+    #     # Loop through each DESC file in clusters directories
+    #     for cluster_path in iglob(os.path.join(clusters_path, 'MGYP*')):
+    #         # Load cluster from DESC file
+    #         cluster = Cluster.from_dir(cluster_path)
+    #
+    #         # Define HMM model path
+    #         model_path = os.path.join(cluster_path, 'HMM.model')
+    #
+    #         # Define SEED alignment path
+    #         seed_path = os.path.join(cluster_path, 'SEED.aln')
+    #
+    #         # Define ALIGN alignment path
+    #         align_path = os.path.join(cluster_path, 'ALIGN.aln')
+    #
+    #         # Store cluster
+    #         clusters[cluster.name] = cluster
+    #
+    #
+    #     # Verbose output
+    #     if verbose:
+    #         print('Loaded {:d} clusters'.format(len(clusters)), end=' ')
+    #         print('from {:s}'.fromat(clusters_path))
+    #     # Return clusters dictionary
+    #     return clusters
 
-        Loop through each cluster directory in given clusters path.
-        Moreover, it checks for foundamental files: HMM model file, domain
-        hits against MGnifam and SEED alignment and ALIGN full alignment.
-
-        Args
-        clusters_path (str)         Path where clusters DESC files are stored
-        verbose (bool)              Wether to print verbose output
-
-        Return
-        (dict)                      Dictionary mapping cluster name to cluster
-                                    instance
-        """
-        # Initialize clusters dictionary (accession: cluster)
-        clusters = dict()
-        # Loop through each DESC file in clusters directories
-        for cluster_path in iglob(os.path.join(clusters_path, 'MGYP*')):
-            # Load cluster from DESC file
-            cluster = Cluster.from_dir(cluster_path)
-
-            # Define HMM model path
-            model_path = os.path.join(cluster_path, 'HMM.model')
-
-            # Define SEED alignment path
-            seed_path = os.path.join(cluster_path, 'SEED.aln')
-
-            # Define ALIGN alignment path
-            align_path = os.path.join(cluster_path, 'ALIGN.aln')
-
-            # Store cluster
-            clusters[cluster.name] = cluster
-
-
-        # Verbose output
-        if verbose:
-            print('Loaded {:d} clusters'.format(len(clusters)), end=' ')
-            print('from {:s}'.fromat(clusters_path))
-        # Return clusters dictionary
-        return clusters
-
-    def load_clusters(self, clusters, mgnifam_version, verbose=False):
+    def load_clusters(self, clusters_iter, mgnifam_version, verbose=False):
         """ Load clusters into MGnifam database
 
         Args
         clusters (dict)     Dict of clusters retrieved from directory
         verbose (bool)      Whether to print verbose output
         """
-        # Initialize timers
-        time_beg, time_end = time(), 0.0
+        # Verbose
+        if verbose:
+            # Initialize timers
+            time_beg, time_end = time(), 0.0
+            # Show execution start
+            print('Loading {:d}'.format(len(clusters_iter)), end=' ')
+            print('clusters to MGnifam database...', end=' ')
+
+        # Loop through each cluster path
+        for cluster_path in clusters_iter:
+
+
+            # Try loading cluster into database
+            try:
+
+                # Parse cluster from directory
+                cluster = Cluster.from_dir(cluster_path)
+                # Load cluster to MGnifam database
+                cluster.to_mgnifam(self.mgnifam_db)
+
+            # Case value error has been found
+            except ValueError:
+                # Go to next iteration
+                pass
+
+        # Verbose
+        if verbose:
+            # Update timers
+            time_end = time()
+            # Show execution time
+            print('done in {:.0f} seconds'.format(time_end - time_beg))
+
         # Initialize cluster accession and id
         cluster_acc, cluster_id = '', ''
         # Loop through each cluster
@@ -444,19 +488,19 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Build MGnifam clusters')
     # Define path to input directory
     parser.add_argument(
-        '-i', '--in_path', type=str, required=True,
-        help='Path to input directory, containing built MGnifam entries'
+        '-i', '--in_path', nargs='+', type=str, required=True,
+        help='Path to input cluster directories'
     )
     # # Define output path
     # parser.add_argument(
     #     '-o', '--out_path', type=str, required=True,
     #     help='Path to output directory'
     # )
-    # Define author name
-    parser.add_argument(
-        '-a', '--author_name', type=str, default='Anonymous',
-        help='Name of the user running MGnifam build pipeline'
-    )
+    # # Define author name
+    # parser.add_argument(
+    #     '-a', '--author_name', type=str, default='Anonymous',
+    #     help='Name of the user running MGnifam build pipeline'
+    # )
     # # Wether to shuffle input or not
     # parser.add_argument(
     #     '--shuffle', type=int, default=0,
@@ -557,87 +601,131 @@ if __name__ == '__main__':
         '--env_path', type=str, required=False,
         help='Path to .json file holding environmental variables'
     )
-    # Define scheduler options
-    group = parser.add_argument_group('Scheduler options')
-    # Define schduler type
+    # Define MGnifam database options
+    group = parser.add_argument_group('MGnifam database options')
+    # Add database user
     group.add_argument(
-        '-s', '--scheduler_type', type=str, default='LSF',
-        help='Type of scheduler to use to distribute parallel processes'
+        '--mgnifam_user', type=str, required=True,
+        help='MGnifam database username'
     )
-    # Define minimum number of jobs
+    # Add database password
     group.add_argument(
-        '-j', '--min_jobs', type=int, default=0,
-        help='Minimum number of parallel processes to keep alive'
+        '--mgnifam_password', type=str, required=False,
+        help='MGnifam database password'
     )
-    # Define maximum number of jobs
+    # Add database host
     group.add_argument(
-        '-J', '--max_jobs', type=int, default=100,
-        help='Maximum number of parallel processes to keep alive'
+        '--mgnifam_host', type=str, default='localhost',
+        help='MGnifam database host'
     )
-    # Define minimum number of cores
+    # Add database host
     group.add_argument(
-        '-c', '--min_cores', type=int, default=1,
-        help='Minimum number of cores to use per process'
+        '--mgnifam_port', type=str, default=3309,
+        help='MGnifam database host'
     )
-    # Define maximum number of cores
+    # Add database user
     group.add_argument(
-        '-C', '--max_cores', type=int, default=1,
-        help='Maximum number of cores to use per process'
+        '--pfam_user', type=str, required=True,
+        help='Pfam database username'
     )
-    # Define minimum memory allocable per job
+    # Add database password
     group.add_argument(
-        '-m', '--min_memory', type=str, default='2 GB',
-        help='Minimum memory allocable per process'
+        '--pfam_password', type=str, required=False,
+        help='Pfam database password'
     )
-    # Define maximum memory allocable per job
+    # Add database host
     group.add_argument(
-        '-M', '--max_memory', type=str, default='4 GB',
-        help='Maximum memory allocable per process'
+        '--pfam_host', type=str, default='localhost',
+        help='Pfam database host'
     )
-    # Define walltime
+    # Add database host
     group.add_argument(
-        '-W', '--walltime', type=str, default='02:00',
-        help='How long can a process be kept alive'
+        '--pfam_port', type=str, default=3309,
+        help='Pfam database host'
     )
+    # # Define scheduler options
+    # group = parser.add_argument_group('Scheduler options')
+    # # Define schduler type
+    # group.add_argument(
+    #     '-s', '--scheduler_type', type=str, default='LSF',
+    #     help='Type of scheduler to use to distribute parallel processes'
+    # )
+    # # Define minimum number of jobs
+    # group.add_argument(
+    #     '-j', '--min_jobs', type=int, default=0,
+    #     help='Minimum number of parallel processes to keep alive'
+    # )
+    # # Define maximum number of jobs
+    # group.add_argument(
+    #     '-J', '--max_jobs', type=int, default=100,
+    #     help='Maximum number of parallel processes to keep alive'
+    # )
+    # # Define minimum number of cores
+    # group.add_argument(
+    #     '-c', '--min_cores', type=int, default=1,
+    #     help='Minimum number of cores to use per process'
+    # )
+    # # Define maximum number of cores
+    # group.add_argument(
+    #     '-C', '--max_cores', type=int, default=1,
+    #     help='Maximum number of cores to use per process'
+    # )
+    # # Define minimum memory allocable per job
+    # group.add_argument(
+    #     '-m', '--min_memory', type=str, default='2 GB',
+    #     help='Minimum memory allocable per process'
+    # )
+    # # Define maximum memory allocable per job
+    # group.add_argument(
+    #     '-M', '--max_memory', type=str, default='4 GB',
+    #     help='Maximum memory allocable per process'
+    # )
+    # # Define walltime
+    # group.add_argument(
+    #     '-W', '--walltime', type=str, default='02:00',
+    #     help='How long can a process be kept alive'
+    # )
     # Retrieve arguments
     args = parser.parse_args()
 
-    # Initialize scheduler
-    scheduler = None
-    # Case scheduler type is LSF
-    if args.scheduler_type == 'LSF':
-        # Define LSF scheduler
-        scheduler = LSFScheduler(
-            # Define cores boundaries
-            min_cores=args.min_cores,
-            max_cores=args.max_cores,
-            # Define memory boundaries
-            min_memory=args.min_memory,
-            max_memory=args.max_memory,
-            # Debug
-            silence_logs='debug',
-            # Define walltime
-            walltime=args.walltime,
-            # Define processes per job
-            processes=1
-        )
-    # Case scheduler type is Local
-    if args.scheduler_type == 'Local':
-        # Define Local scheduler
-        scheduler = LocalScheduler(
-            # Define cores boundaries
-            min_cores=args.min_cores,
-            max_cores=args.max_cores,
-            # Define memory boundaries
-            min_memory=args.min_memory,
-            max_memory=args.max_memory,
-            # Define processes per job
-            threads_per_worker=1
-        )
-    # Case no scheduler has been set
-    if scheduler is None:
-        # Raise new error
-        raise ValueError(' '.join([
-            'scheduler type can be one among `Local` or `LSF`',
-            '%s has been chosen instead' % args.scheduler_type
-        ]))
+    # # Initialize scheduler
+    # scheduler = None
+    # # Case scheduler type is LSF
+    # if args.scheduler_type == 'LSF':
+    #     # Define LSF scheduler
+    #     scheduler = LSFScheduler(
+    #         # Define cores boundaries
+    #         min_cores=args.min_cores,
+    #         max_cores=args.max_cores,
+    #         # Define memory boundaries
+    #         min_memory=args.min_memory,
+    #         max_memory=args.max_memory,
+    #         # Debug
+    #         silence_logs='debug',
+    #         # Define walltime
+    #         walltime=args.walltime,
+    #         # Define processes per job
+    #         processes=1
+    #     )
+    # # Case scheduler type is Local
+    # if args.scheduler_type == 'Local':
+    #     # Define Local scheduler
+    #     scheduler = LocalScheduler(
+    #         # Define cores boundaries
+    #         min_cores=args.min_cores,
+    #         max_cores=args.max_cores,
+    #         # Define memory boundaries
+    #         min_memory=args.min_memory,
+    #         max_memory=args.max_memory,
+    #         # Define processes per job
+    #         threads_per_worker=1
+    #     )
+    # # Case no scheduler has been set
+    # if scheduler is None:
+    #     # Raise new error
+    #     raise ValueError(' '.join([
+    #         'scheduler type can be one among `Local` or `LSF`',
+    #         '%s has been chosen instead' % args.scheduler_type
+    #     ]))
+
+    #

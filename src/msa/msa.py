@@ -273,12 +273,25 @@ class MSA(object):
 
         # Update list of sequences
         for accession, residues in sequences_dict.items():
-            # Split accession in accession number and residues boundaries
-            found = re.search(r'(\S+)/(\d+)-(\d+)', accession)
-            # Retrieve accession number and residues boundaries
-            acc.append(found.group(1))
-            beg.append(int(found.group(2)))
-            end.append(int(found.group(3)))
+            # Match format with boundaries
+            match = re.search(r'(\S+)/(\d+)-(\d+)', accession)
+            # Case current accession contains boundaries
+            if match:
+                # Set accession number
+                acc.append(match.group(1))
+                # Set boundaries
+                beg.append(int(match.group(2)))
+                end.append(int(match.group(3)))
+            # Otherwise, match format without boundaries
+            else:
+                # Retrieve accession number
+                acc.append(accession)
+                # Set begin boundary
+                beg.append(1)
+                # Define non gap residues
+                not_gap = np.isin(list(residues), list(cls.gap), invert=True)
+                # Set end boundary
+                end.append(not_gap.sum())
             # Save residues
             aln.append(list(residues))
 
@@ -644,15 +657,18 @@ if __name__ == '__main__':
     # Define root path
     ROOT_PATH = os.path.dirname(__file__) + '/../..'
     # Define examples path
-    EXAMPLES_PATH = ROOT_PATH + '/tmp/examples/MGYP*'
+    # EXAMPLES_PATH = ROOT_PATH + '/tmp/examples/MGYP*'
+    EXAMPLES_PATH = ROOT_PATH + '/tmp/STO/MGYP*'
 
     # Load all examples paths
     examples_path = glob(EXAMPLES_PATH)
 
     # Define alignment path
-    aln_path = os.path.join(examples_path[0], 'SEED')
+    # aln_path = os.path.join(examples_path[0], 'SEED')
+    sto_path = os.path.join(ROOT_PATH, 'tmp/STO/MGYP000040147288', 'ALIGN.sto')
     # Read multiple sequence alignment
-    msa = MSA.from_aln(aln_path)
+    # msa = MSA.from_aln(aln_path)
+    msa = MSA.from_sto(sto_path)
     # Check number of aligned sequences
     print('There are {:d} aligned sequences'.format(msa.aln.shape[0]), end=' ')
     print('with {:d} columns'.format(msa.aln.shape[1]), end=' ')
@@ -759,27 +775,27 @@ if __name__ == '__main__':
     _ = msa.plot_scatter(score='occupancy', ax=ax)
     _ = plt.show()
 
-    # Define multiple sequence alignment input test sequences
-    sequences = [
-        ">MGYP001026457211 PL=10 UP=0 BIOMES=0000000011000 LEN=188 CR=0\nNTTCENADRLGTIPADSYAKVNSPSFLGIPLTTTPKPDAPSTQIVNIEYLNSQPTYIRQKTAPEKALSGKLWIGNNNCLNAYNNDGWESVFSEVALSINALNAAVDQPTSPNDYSGQLKFTGKRKITALNLTNIKTTTSEYATVIGMRADNKELAYEFICIDNYIYMRTGKGDTWNNAISIISKFTSF",
-        ">MGYP000848664103 PL=00 UP=0 BIOMES=0000000011000 LEN=297 CR=1\nMAEYSSELDKITYAELALSLQNTIKNNLAHTKDQVIHVTQEDKNKWNQISDIPEATETKKGALTPQEKIKLKNIEERANNYTHPTSGVTAGQYIQVEVNAEGHVVAGHNPTKINTTCENADRLGTIPADSYAKVNSPSFLGIPLTTTPKPDAPSTQIVNIEYLNSQPTYIRQKTAPEKALSGKLWIGNNNCLNAYNNDGWQSVFSEVALSINALNAAVDQPTSPNDYSGQLKFTGKRKITALKLTNIKATTSEYATVIGMRADNRELAYEFICIDNYIYMRTGKGDTWNNAISIIKD",
-        ">MGYP001028524128 PL=01 UP=0 BIOMES=0000000011000 LEN=26 CR=0\nMAEYSSELDKITYAELALSLQNTIKN",
-        ">MGYP000854299633 PL=00 UP=0 BIOMES=0000000011000 LEN=297 CR=0\nMAEYSSELDKITYAELALSLQNTIKSNLAHTKDQVIHVTQEDKNKWNQISDIPEATETKKGALTPQEKIKLKNIEERANNYTHPTSGVTAGQYIQVEVNAEGHVVAGHNPTKINTTCENADRLGTIPADSYAKVNSPSFLGIPLTPTPKLDAPASQIVNIEYLNSQPTYIRQKTAPEKALSGKLWIGNNNCLNAYNNDGWQSVFSEVALSINALNTAVDQPTSPNDYSGQFKFTGKRKITALKLTNIKATTSEYATVIGMRADNRELAYEFICIDNYIYMRTGKGDTWNNAISIIKD"
-    ]
-    # Define a Muscle instance
-    muscle = Muscle()
-    # Run Muscle with input test sequences
-    msa = muscle.run(sequences, acc_regex=r'^>(\S+)')
-    # Debug
-    print(msa.aln)
-    # Check number of aligned sequences
-    print('There are %d aligned sequences with %d columns' % tuple(msa.aln.shape))
-    # Check all test rows
-    for i in range(msa.aln.shape[0]):
-        # Print sequence description
-        print('Sequence nr %d: %s from %d to %d' % (
-            i+1, msa.acc[i], msa.beg[i], msa.end[i]
-        ))
-        # Print actual sequence
-        print(''.join(msa.aln[i, :]))
-        print()
+    # # Define multiple sequence alignment input test sequences
+    # sequences = [
+    #     ">MGYP001026457211 PL=10 UP=0 BIOMES=0000000011000 LEN=188 CR=0\nNTTCENADRLGTIPADSYAKVNSPSFLGIPLTTTPKPDAPSTQIVNIEYLNSQPTYIRQKTAPEKALSGKLWIGNNNCLNAYNNDGWESVFSEVALSINALNAAVDQPTSPNDYSGQLKFTGKRKITALNLTNIKTTTSEYATVIGMRADNKELAYEFICIDNYIYMRTGKGDTWNNAISIISKFTSF",
+    #     ">MGYP000848664103 PL=00 UP=0 BIOMES=0000000011000 LEN=297 CR=1\nMAEYSSELDKITYAELALSLQNTIKNNLAHTKDQVIHVTQEDKNKWNQISDIPEATETKKGALTPQEKIKLKNIEERANNYTHPTSGVTAGQYIQVEVNAEGHVVAGHNPTKINTTCENADRLGTIPADSYAKVNSPSFLGIPLTTTPKPDAPSTQIVNIEYLNSQPTYIRQKTAPEKALSGKLWIGNNNCLNAYNNDGWQSVFSEVALSINALNAAVDQPTSPNDYSGQLKFTGKRKITALKLTNIKATTSEYATVIGMRADNRELAYEFICIDNYIYMRTGKGDTWNNAISIIKD",
+    #     ">MGYP001028524128 PL=01 UP=0 BIOMES=0000000011000 LEN=26 CR=0\nMAEYSSELDKITYAELALSLQNTIKN",
+    #     ">MGYP000854299633 PL=00 UP=0 BIOMES=0000000011000 LEN=297 CR=0\nMAEYSSELDKITYAELALSLQNTIKSNLAHTKDQVIHVTQEDKNKWNQISDIPEATETKKGALTPQEKIKLKNIEERANNYTHPTSGVTAGQYIQVEVNAEGHVVAGHNPTKINTTCENADRLGTIPADSYAKVNSPSFLGIPLTPTPKLDAPASQIVNIEYLNSQPTYIRQKTAPEKALSGKLWIGNNNCLNAYNNDGWQSVFSEVALSINALNTAVDQPTSPNDYSGQFKFTGKRKITALKLTNIKATTSEYATVIGMRADNRELAYEFICIDNYIYMRTGKGDTWNNAISIIKD"
+    # ]
+    # # Define a Muscle instance
+    # muscle = Muscle()
+    # # Run Muscle with input test sequences
+    # msa = muscle.run(sequences, acc_regex=r'^>(\S+)')
+    # # Debug
+    # print(msa.aln)
+    # # Check number of aligned sequences
+    # print('There are %d aligned sequences with %d columns' % tuple(msa.aln.shape))
+    # # Check all test rows
+    # for i in range(msa.aln.shape[0]):
+    #     # Print sequence description
+    #     print('Sequence nr %d: %s from %d to %d' % (
+    #         i+1, msa.acc[i], msa.beg[i], msa.end[i]
+    #     ))
+    #     # Print actual sequence
+    #     print(''.join(msa.aln[i, :]))
+    #     print()

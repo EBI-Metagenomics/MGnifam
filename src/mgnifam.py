@@ -1,5 +1,6 @@
 # Dependencies
 from src.hmm.hmm import HMM
+from src.msa.msa import MSA
 import os
 import re
 
@@ -224,7 +225,7 @@ class Cluster(object):
             file.write('TP   {:s}'.format(self.family))
 
     # Load cluster to MGnifam database
-    def to_mgnifam(mgnifam_db):
+    def to_mgnifam(self, mgnifam_db):
         """ Load cluster to MGnifam database
 
         Args
@@ -238,23 +239,62 @@ class Cluster(object):
         (OSError)                           In case one of the parsed files is
                                             not correctly formatted
         """
-        # TODO Check accession
+        # Retrieve next available accession number
+        next_accession = mgnifam_db.get_next_accession()
+        # Case accession is not set
+        if not self.accession_:
+            # Set accession number
+            self.accession = next_accession
 
-        # TODO Check id
+        # Check accession (next accession must be greater than current)
+        if int(self.accession_) < int(re.sub('^MGYF', '', next_accession)):
+            # Raise exception
+            raise ValueError(' '.join([
+                'Could not load cluster into database:',
+                'current accession is {:s}, while'.format(self.accession),
+                'next available accession {:s}'.format(next_accession)
+            ]))
 
-        # TODO Check description
+        # Retrieve next available id
+        next_id = mgnifam_db.get_next_id()
+        # Case id is not set
+        if not self.id_:
+            # Set accession number
+            self.id = next_id
 
-        # TODO Check author
+        # Check id (next id must be greater than current one)
+        if int(self.id_) < int(re.sub('^MGDUF', '', next_id)):
+            # Raise exception
+            raise ValueError(' '.join([
+                'Could not load cluster into database:',
+                'current id is {:s}, while'.format(self.id),
+                'next available id {:s}'.format(next_id)
+            ]))
 
-        # TODO Check HMM model file
+        # Load HMM model file
+        model = HMM.from_file(self.model_path)
+        # Check HMM model name
+        if not model.name:
+            # Raise exception
+            raise ValueError('HMM model has no name set')
+        # Check HMM model length
+        if not model.length:
+            # Raise exception
+            raise ValueError('HMM model length is not valid')
 
-        # TODO Check HMM model name
+        # Load SEED alignment
+        seed = MSA.from_aln(self.seed_path)
+        # Check SEED alignment file
+        if seed.is_empty():
+            # Raise exception
+            raise ValueError('SEED alignment shape is not valid')
 
-        # TODO Check HMM model length
-
-        # TODO Check SEED alignment file
-
-        # TODO CHeck ALIGN alignment file
+        # Check ALIGN alignment file
+        align = MSA.from_aln(self.align_path)
+        # Check ALIGN file
+        if align.is_empty():
+            # Raise exception
+            raise ValueError('ALIGN alignment shape is not valid')
 
         # Abstract
         raise NotImplementedError
