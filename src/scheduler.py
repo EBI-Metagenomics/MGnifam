@@ -63,8 +63,27 @@ class Scheduler(object):
     def min_memory(self, min_memory):
         self._min_memory = min_memory
 
+    # With statement enter
+    def __enter__(self):
+        # Return self
+        return self
+
+    # With statement exit
+    def __exit__(self ,type, value, traceback):
+        # Close connection
+        self.close()
+
+    # Close either cluster and client
+    def close(self):
+        # Stop client
+        self.client.close()
+        # Stop cluster
+        self.cluster.close()
+        # Remove both cluster and client
+        self._cluster, self._client = None, None
+
     # Require n jobs with given cores and memory characteristics
-    def adapt(self, minimum, maximum, cores=1, memory='1 GB', **kwargs):
+    def adapt(self, minimum, maximum, cores=1, memory='1 GB'):
 
         # Check if given memory is greater than maximum allowed
         if parse_bytes(memory) > parse_bytes(self.max_memory):
@@ -94,14 +113,8 @@ class Scheduler(object):
                 'minimum allowed is {:d}'.format(self.min_cores)
             ]))
 
-    # Close either cluster and client
-    def close(self):
-        # Stop client
-        self.client.close()
-        # Stop cluster
-        self.cluster.close()
-        # Remove both cluster and client
-        self._cluster, self._client = None, None
+        # Return self
+        return self
 
 
 # LSF distributed jobs handler
@@ -113,26 +126,35 @@ class LSFScheduler(Scheduler):
         super().__init__(min_cores=min_cores, max_cores=max_cores, min_memory=min_memory, max_memory=max_memory)
         # Define cluster default parameters
         self.cluster_kwargs = {**{
-            'memory': max_memory,
+            'memory': min_memory,
             'cores': min_cores,
             'processes': processes,
             'walltime': walltime
         }, **kwargs}
 
     # Define adapt method
-    def adapt(self, minimum, maximum, **kwargs):
+    def adapt(self, minimum, maximum, cores=None, memory=None, **kwargs):
         # Merge kwargs with default kwargs
         kwargs = {**self.cluster_kwargs, **kwargs}
+        # Eventually update number of cores
+        if cores is not None:
+            kwargs['cores'] = cores
+        # Eventually update memory
+        if memory is not None:
+            kwargs['memory'] = memory
+
+        # Retrieve number of cores and memory
+        cores, memory = kwargs['cores'], kwargs['memory']
         # Call parent adapt method (check values)
-        super().adapt(minimum, maximum, **kwargs)
+        super().adapt(minimum, maximum, cores=cores, memory=memory)
         # Make new cluster
         self._cluster = LSFCluster(**kwargs)
         # Make client
         self._client = Client(self._cluster)
         # Adapt cluster
         self._cluster.adapt(minimum=minimum, maximum=maximum)
-        # Return client reference
-        return self.client
+        # Return self reference
+        return self
 
 
 # Local jobs handler
@@ -148,19 +170,30 @@ class LocalScheduler(Scheduler):
             'processes': processes
         }, **kwargs}
 
-    def adapt(self, minimum, maximum, **kwargs):
+    def adapt(self, minimum, maximum, cores=None, memory=None, **kwargs):
         # Merge kwargs with default kwargs
         kwargs = {**self.cluster_kwargs, **kwargs}
+
+        # Eventually update number of cores
+        if cores is not None:
+            kwargs['threads_per_worker'] = cores
+
+        # Note: there is no memory parameter in local cluster
+        if memory is not None:
+            pass
+
         # Call parent adapt method (check values)
-        super().adapt(minimum, maximum, **kwargs)
+        super().adapt(minimum, maximum,
+                      cores=kwargs['threads_per_worker'],
+                      memory=self.min_memory)
         # Make new cluster
         self._cluster = LocalCluster(**kwargs)
         # Make client
         self._client = Client(self._cluster)
         # Adapt cluster
         self._cluster.adapt(minimum=minimum, maximum=maximum)
-        # Return client reference
-        return self.client
+        # Return self reference
+        return self
 
 
 # Unit testing

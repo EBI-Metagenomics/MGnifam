@@ -1,3 +1,4 @@
+from src.scheduler import LSFScheduler, LocalScheduler
 from src.mgnifam import Cluster
 from src.hmm.hmmpress import HMMPress
 from src.hmm.hmmemit import HMMEmit
@@ -7,6 +8,7 @@ from tempfile import NamedTemporaryFile
 # from time import time
 from glob import iglob
 from time import time
+import argparse
 import os
 import re
 
@@ -23,7 +25,7 @@ class Load(object):
         self, mgnifam_db, pfam_db,
         hmmpress_cmd=['hmmpress'],
         hmmemit_cmd=['hmmemit'],
-        env=os.environ.copy()
+        env=os.environ
     ):
         # Store databases
         self.mgnifam_db = mgnifam_db
@@ -42,9 +44,6 @@ class Load(object):
 
             # Connect to database
             self.mgnifam_db.connect()
-
-            # Initialize transaction
-            self.mgnifam_db.autocommit = False
 
             # Retrieve clusters dictionary (accession: cluster)
             clusters = self.get_clusters(clusters_path, verbose=verbose)
@@ -114,6 +113,10 @@ class Load(object):
     def get_clusters(self, clusters_path, verbose=False):
         """ Initialize clusters dictionary
 
+        Loop through each cluster directory in given clusters path.
+        Moreover, it checks for foundamental files: HMM model file, domain
+        hits against MGnifam and SEED alignment and ALIGN full alignment.
+
         Args
         clusters_path (str)         Path where clusters DESC files are stored
         verbose (bool)              Wether to print verbose output
@@ -128,8 +131,20 @@ class Load(object):
         for cluster_path in iglob(os.path.join(clusters_path, 'MGYP*')):
             # Load cluster from DESC file
             cluster = Cluster.from_dir(cluster_path)
+
+            # Define HMM model path
+            model_path = os.path.join(cluster_path, 'HMM.model')
+
+            # Define SEED alignment path
+            seed_path = os.path.join(cluster_path, 'SEED.aln')
+
+            # Define ALIGN alignment path
+            align_path = os.path.join(cluster_path, 'ALIGN.aln')
+
             # Store cluster
             clusters[cluster.name] = cluster
+
+
         # Verbose output
         if verbose:
             print('Loaded {:d} clusters'.format(len(clusters)), end=' ')
@@ -420,3 +435,209 @@ class Load(object):
         #     # Retrieve each domain hit
         #     for
         raise NotImplementedError
+
+
+# Command line execution
+if __name__ == '__main__':
+
+    # Argparse
+    parser = argparse.ArgumentParser(description='Build MGnifam clusters')
+    # Define path to input directory
+    parser.add_argument(
+        '-i', '--in_path', type=str, required=True,
+        help='Path to input directory, containing built MGnifam entries'
+    )
+    # # Define output path
+    # parser.add_argument(
+    #     '-o', '--out_path', type=str, required=True,
+    #     help='Path to output directory'
+    # )
+    # Define author name
+    parser.add_argument(
+        '-a', '--author_name', type=str, default='Anonymous',
+        help='Name of the user running MGnifam build pipeline'
+    )
+    # # Wether to shuffle input or not
+    # parser.add_argument(
+    #     '--shuffle', type=int, default=0,
+    #     help='Whether to shuffle input cluster names or not'
+    # )
+    # # Define batch size
+    # parser.add_argument(
+    #     '--batch_size', type=int, default=100,
+    #     help='Number of clusters to make at each iteration'
+    # )
+    # # Define maximum number of clusters to make
+    # parser.add_argument(
+    #     '--max_clusters', type=int, default=0,
+    #     help='Maximum number of clusters to make'
+    # )
+    # # Define path to LinClust clusters file(s)
+    # parser.add_argument(
+    #     '--linclust_path', nargs='+', type=str, default=glob(LINCLUST_PATH),
+    #     help='Path to LinClust clusters file(s)'
+    # )
+    # # Define path to MGnifam file(s)
+    # parser.add_argument(
+    #     '--mgnifam_path', nargs='+', type=str, default=glob(MGNIFAM_PATH),
+    #     help='Path to MGnifam file(s)'
+    # )
+    # # Define MGnifam width (maximum sequence length)
+    # parser.add_argument(
+    #     '--mgnifam_width', type=int, required=False,
+    #     help='Maximum sequence length in MGnifam dataset'
+    # )
+    # # Define MGnifam height (total number of sequences)
+    # parser.add_argument(
+    #     '--mgnifam_height', type=int, required=False,
+    #     help='Total number of sequences in MGnifam dataset'
+    # )
+    # # Define path to UniProt file(s)
+    # parser.add_argument(
+    #     '--uniprot_path', nargs='+', type=str, default=glob(UNIPROT_PATH),
+    #     help='Path to UniProt file(s)'
+    # )
+    # # Define UniProt width (maximum sequence length)
+    # parser.add_argument(
+    #     '--uniprot_width', type=int, required=False,
+    #     help='Maximum sequence length in UniProt dataset'
+    # )
+    # # Define UniProt height (total number of sequences)
+    # parser.add_argument(
+    #     '--uniprot_height', type=int, required=False,
+    #     help='Total number of sequences in UniProt dataset'
+    # )
+    # # Define MobiDB executable
+    # parser.add_argument(
+    #     '--mobidb_cmd', nargs='+', type=str, default=['mobidb_lite.py'],
+    #     help='MobiDB Lite disorder predictor executable'
+    # )
+    # # Define Muscle executable
+    # parser.add_argument(
+    #     '--muscle_cmd', nargs='+', type=str, default=['muscle'],
+    #     help='Muscle multiple sequence aligner executable'
+    # )
+    # # Define hmmsearch executable
+    # parser.add_argument(
+    #     '--hmmsearch_cmd', nargs='+', type=str, default=['hmmsearch'],
+    #     help='HMMER3 search executable'
+    # )
+    # # Define hmmbuild executable
+    # parser.add_argument(
+    #     '--hmmbuild_cmd', nargs='+', type=str, default=['hmmbuild'],
+    #     help='HMMER3 build executable'
+    # )
+    # # Define hmmalign executable
+    # parser.add_argument(
+    #     '--hmmalign_cmd', nargs='+', type=str, default=['hmmalign'],
+    #     help='HMMER3 align executable'
+    # )
+    # Define hmmpress executable
+    parser.add_argument(
+        '--hmmpress_cmd', nargs='+', type=str, default=['hmmpress'],
+        help='HMMER3 press executable'
+    )
+    # Define hmmemit executable
+    parser.add_argument(
+        '--hmmemit_cmd', nargs='+', type=str, default=['hmmemit'],
+        help='HMMER3 emit executable'
+    )
+    # Whether to print verbose output
+    parser.add_argument(
+        '-v', '--verbose', type=int, default=1,
+        help='Print verbose output'
+    )
+    # # Define E-value significance threshold for both UniProt and MGnifam
+    # parser.add_argument(
+    #     '-e', '--e_value', type=float, default=0.01,
+    #     help='E-value threhsold for both UniProt and MGnifam comparisons'
+    # )
+    # Define environmental variables .json file
+    parser.add_argument(
+        '--env_path', type=str, required=False,
+        help='Path to .json file holding environmental variables'
+    )
+    # Define scheduler options
+    group = parser.add_argument_group('Scheduler options')
+    # Define schduler type
+    group.add_argument(
+        '-s', '--scheduler_type', type=str, default='LSF',
+        help='Type of scheduler to use to distribute parallel processes'
+    )
+    # Define minimum number of jobs
+    group.add_argument(
+        '-j', '--min_jobs', type=int, default=0,
+        help='Minimum number of parallel processes to keep alive'
+    )
+    # Define maximum number of jobs
+    group.add_argument(
+        '-J', '--max_jobs', type=int, default=100,
+        help='Maximum number of parallel processes to keep alive'
+    )
+    # Define minimum number of cores
+    group.add_argument(
+        '-c', '--min_cores', type=int, default=1,
+        help='Minimum number of cores to use per process'
+    )
+    # Define maximum number of cores
+    group.add_argument(
+        '-C', '--max_cores', type=int, default=1,
+        help='Maximum number of cores to use per process'
+    )
+    # Define minimum memory allocable per job
+    group.add_argument(
+        '-m', '--min_memory', type=str, default='2 GB',
+        help='Minimum memory allocable per process'
+    )
+    # Define maximum memory allocable per job
+    group.add_argument(
+        '-M', '--max_memory', type=str, default='4 GB',
+        help='Maximum memory allocable per process'
+    )
+    # Define walltime
+    group.add_argument(
+        '-W', '--walltime', type=str, default='02:00',
+        help='How long can a process be kept alive'
+    )
+    # Retrieve arguments
+    args = parser.parse_args()
+
+    # Initialize scheduler
+    scheduler = None
+    # Case scheduler type is LSF
+    if args.scheduler_type == 'LSF':
+        # Define LSF scheduler
+        scheduler = LSFScheduler(
+            # Define cores boundaries
+            min_cores=args.min_cores,
+            max_cores=args.max_cores,
+            # Define memory boundaries
+            min_memory=args.min_memory,
+            max_memory=args.max_memory,
+            # Debug
+            silence_logs='debug',
+            # Define walltime
+            walltime=args.walltime,
+            # Define processes per job
+            processes=1
+        )
+    # Case scheduler type is Local
+    if args.scheduler_type == 'Local':
+        # Define Local scheduler
+        scheduler = LocalScheduler(
+            # Define cores boundaries
+            min_cores=args.min_cores,
+            max_cores=args.max_cores,
+            # Define memory boundaries
+            min_memory=args.min_memory,
+            max_memory=args.max_memory,
+            # Define processes per job
+            threads_per_worker=1
+        )
+    # Case no scheduler has been set
+    if scheduler is None:
+        # Raise new error
+        raise ValueError(' '.join([
+            'scheduler type can be one among `Local` or `LSF`',
+            '%s has been chosen instead' % args.scheduler_type
+        ]))

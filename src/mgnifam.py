@@ -8,30 +8,60 @@ class Cluster(object):
 
     # Constructor
     def __init__(
-        self, acc='', id='', name='', desc='', auth='', type='', seed='', path='',
+        self, accession='', id='', name='', author='Anonymous', path='',
         seq_scores=(25.0, 25.0, 25.0), dom_scores=(25.0, 25.0, 25.0)
-        # build_method='', search_method=''
     ):
-        # Save attributes
-        self.acc = acc  # Accession (primary key)
-        self.id = id  # Identifier
-        self.name = name
-        self.desc = desc
-        self.auth = auth
-        self.type = type
-        self.seed = seed
+        # Store path to file
         self.path = path
+        # Save attributes
+        self.accession = accession  # Accession (primary key)
+        self.id = id  # Identifier
+        self.name = name  # Name of the cluster (SEED sequence)
+        self.author = author
         # Store (TC, NC, GA) scores for sequences
         self.seq_scores = seq_scores
         # Store (TC, NC, GA) scores for domains
         self.dom_scores = dom_scores
-        # # Define build method
-        # self.build_method = build_method
-        # # Define search method
-        # self.search_method = search_method
 
-    def get_path(self, *args):
-        return os.path.join(self.path, *args)
+    @property
+    def accession(self):
+        return 'MGYF{:s}'.format(self.accession_)
+
+    @accession.setter
+    def accession(self, accession):
+        self.accession_ = re.sub(r'^MGYF', '', accession)
+
+    @property
+    def id(self):
+        return 'MGDUF{:s}'.format(self.id_)
+
+    @id.setter
+    def id(self, id):
+        self.id_ = re.sub(r'^MGDUF', '', id)
+
+    @property
+    def description(self):
+        return 'Protein of unknown function ({:s})'.format(self.id)
+
+    @property
+    def type(self):
+        return 'Family'
+
+    @property
+    def hmm_path(self):
+        return os.path.join(self.path, 'HMM.model')
+
+    @property
+    def seed_path(self):
+        return os.path.join(self.path, 'SEED.aln')
+
+    @property
+    def align_path(self):
+        return os.path.join(self.path, 'ALIGN.aln')
+
+    @property
+    def hits_path(self):
+        return os.path.join(self.path, 'HITS.tsv')
 
     def to_dict(self):
         return {
@@ -139,8 +169,6 @@ class Cluster(object):
                 params['auth'] = cls.is_author(line, params['auth'])
                 # Case line is cluster type
                 params['type'] = cls.is_type(line, params['type'])
-                # Case line is seed sequence
-                params['seed'] = cls.is_seed(line, params['seed'])
                 # Case line is TC item
                 params['seq_scores'][0], params['dom_scores'][0] = cls.is_tc(
                     default=(params['seq_scores'][0], params['dom_scores'][0]),
@@ -156,6 +184,8 @@ class Cluster(object):
                     default=(params['seq_scores'][2], params['dom_scores'][2]),
                     line=line
                 )
+        # Return cluster instance
+        return cls(**params)
 
     @classmethod
     def from_dir(cls, cluster_path):
@@ -163,10 +193,8 @@ class Cluster(object):
         cluster_name = os.path.basename(cluster_path)
         # Define DESC file path
         desc_path = os.path.join(cluster_path, 'DESC')
-        # Parse DESC file, retrieve cluster
-        cluster = cls.from_desc(desc_path, cluster_name, cluster_path)
-        # Return cluster
-        return cluster
+        # Parse DESC file, retrieve cluster and return it
+        return cls.from_desc(desc_path, cluster_name, cluster_path)
 
     def to_desc(self):
         # Open description file
@@ -194,3 +222,39 @@ class Cluster(object):
             ))
             # Write family
             file.write('TP   {:s}'.format(self.family))
+
+    # Load cluster to MGnifam database
+    def to_mgnifam(mgnifam_db):
+        """ Load cluster to MGnifam database
+
+        Args
+        mgnifam_db (database.MGnifam)       MGnifam database instance, must be
+                                            authenticated
+
+        Raise
+        (ValueError)                        In some fields are not correct
+        (FileNotFoundError)                 In case one of the required files
+                                            has not been found
+        (OSError)                           In case one of the parsed files is
+                                            not correctly formatted
+        """
+        # TODO Check accession
+
+        # TODO Check id
+
+        # TODO Check description
+
+        # TODO Check author
+
+        # TODO Check HMM model file
+
+        # TODO Check HMM model name
+
+        # TODO Check HMM model length
+
+        # TODO Check SEED alignment file
+
+        # TODO CHeck ALIGN alignment file
+
+        # Abstract
+        raise NotImplementedError

@@ -257,7 +257,7 @@ class MSA(object):
             # Loop through stockholm file lines
             for line in file:
                 # Define expected line format to match
-                match = re.search(r'^([^#]\S*)\s+(\S+)', line)
+                match = re.search(r'^([a-zA-Z0-9]\S*)\s+(\S+)', line)
                 # Case current line does not match expected format
                 if not match:
                     # Go to next iteration
@@ -280,7 +280,7 @@ class MSA(object):
             beg.append(int(found.group(2)))
             end.append(int(found.group(3)))
             # Save residues
-            aln.append(residues)
+            aln.append(list(residues))
 
         # Update output MSA
         msa.aln = np.array(aln)

@@ -1,15 +1,11 @@
 # Dependencies
+from src.sequences import fasta_iter
+from src.utils import open_file
 from tqdm import tqdm
-from tempfile import NamedTemporaryFile
 import glob
-import gzip
 import sys
 import os
 import re
-
-# Custom dependencies
-from src.utils import is_gzip, open_file, gunzip
-from src.sequences import fasta_iter
 
 
 class Dataset(object):
@@ -49,7 +45,7 @@ class Dataset(object):
         # Define output path
         chunk_path = path.format(index)
         # Persist data as compressed file
-        with gzip.open(chunk_path, 'wt') as chunk_file:
+        with open_file(chunk_path, 'w', 'wt') as chunk_file:
             # Write content
             chunk_file.write(sep.join(content))
 

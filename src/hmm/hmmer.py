@@ -48,10 +48,10 @@ class Tblout(object):
             for row in iter:
                 # Merge by whitespace al columns after current width
                 row = row[:self.width - 1] + [' '.join(row[self.width:])]
-                # Add new line to inner table
-                self.table.append({
-                    col: row[i] for col, i in self.columns.items()
-                })
+                # Parse row list to dict
+                row = {col: row[i] for col, i in self.columns.items()}
+                # Add row inner table
+                self.table.append(row)
 
     @staticmethod
     def iterator(iterable):
@@ -204,8 +204,8 @@ class Tblout(object):
             if curr_bits > ga:
                 # Initialize set for current query name
                 hits.setdefault(curr_qname, list())
-                # Add current target name to hits set
-                hits[curr_qname] += [row]
+                # Add current row to hits set
+                hits.get(curr_qname).append(row)
 
         # Return hits dictionary
         return hits
@@ -271,17 +271,53 @@ def merge_hits(*args):
         # Loop through every query name in current dictionary
         for query_name in args[i]:
             # Loop through each target name for current query name
-            for target_name in args[i][query_name]:
+            for hit in args[i][query_name]:
+                # # DEBUG
+                # print(hit)
+                # # Retrieve target name out of hit
+                # target_name = hit.get('target_name')
                 # Store current query name
-                hits.setdefault(query_name, set())
+                hits.setdefault(query_name, list())
                 # Store current target name
-                hits[query_name].add(target_name)
+                hits.get(query_name).append(hit)
     # Return merged hits dictionary
     return hits
 
 
+# Utility: parse hits to TSV
+def to_tsv(hits, path, sep=r'\t'):
+    """ Parse list of hits to file
+
+    Automatically generates header by looking to first hit dictionary keys.
+    Then, loops through all the hits in the given list and adds them to given
+    output path.
+
+    Args
+    hits (list)     List of hits dictionary
+    path (str)      Path to output tsv file
+    sep (str)       Column sceparator in output .tsv file
+
+    Raise
+    (OSError)       In case it could not create output file
+    """
+    # Open output file
+    with open(path, 'w') as file:
+        # Retrieve header
+        header = sep.join([col for col in hits[0]]) + '\n'
+        # Write header line
+        file.write(header)
+        # Loop through all hits
+        for i, hit in enumerate(hits):
+            # Define current line
+            line = sep.join([hit[col] for col in hit]) + '\n'
+            #  Write current line to file
+            file.write(line)
+
 # Unit testing
 if __name__ == '__main__':
+
+    # Dependencies
+    from src.hmm.hmmalign import HMMAlign
 
     # Define root directory
     ROOT_PATH = os.path.dirname(__file__) + '/../..'
@@ -303,14 +339,14 @@ if __name__ == '__main__':
     print('Making HMM alignment of {:s}'.format(out_path))
 
     # Define hmmalign script wrapper instance
-    hmm_align = HMMAlign()
+    hmmalign = HMMAlign()
 
     # Try to run script
     try:
         # Initialize timers
         time_beg, time_end = time(), 0.0
         # Run hmmalign script
-        hmm_align(hmm_path, fasta_path, out_path)
+        hmmalign(hmm_path, fasta_path, out_path)
         # Update timers
         time_end = time()
         time_tot = time_end - time_beg

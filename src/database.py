@@ -11,31 +11,41 @@ import re
 class Database(object):
 
     # Constructor
-    def __init__(self, user='', password='', database='', host='', port=3309):
+    def __init__(self, user='', password='', database='', host='', port=3309, autocommit=False):
         # Store database settings
         self.user = user
         self.password = password
         self.database = database
         self.host = host
         self.port = port
+        # Initialize autocommit
+        self.autocommit_ = bool(autocommit)
         # Initialize database connection
-        self.conn = None
+        self.conn_ = None
+        # Initialize database cursor
+        self.cursor_ = None
 
     def connect(self):
         # Set inner connection
-        self.conn = dbms.connect(
+        self.conn_ = dbms.connect(
             user=self.user,
             password=self.password,
             database=self.database,
             host=self.host,
             port=self.port
         )
+        # Define autocommit
+        self.autocommit = False
+        # Define cursor
+        self.cursor_ = self.conn_.cursor()
 
     def close(self):
         # Close connection
-        self.conn.close()
+        self.conn_.close()
+        # Clear cursor
+        self.cursor_ = None
         # Clear connection
-        self.conn = None
+        self.conn_ = None
 
     def __enter__(self):
         # Connect database
@@ -59,7 +69,7 @@ class Database(object):
 
     @property
     def cursor(self):
-        return self.conn.cursor()
+        return self.cursor_
 
     @property
     def autocommit(self):
@@ -67,6 +77,9 @@ class Database(object):
 
     @autocommit.setter
     def autocommit(self, autocommit):
+        # Update autocommit flag
+        self.autocommit_ = bool(autocommit)
+        # Update connection
         self.conn.autocommit = bool(autocommit)
 
     def rollback(self):
@@ -83,11 +96,9 @@ class MGnifam(Database):
         (set)               Set of cluster accession numbers
         """
         # Get cursor
-        cursor = self.cursor
-        # Execute query
-        cursor.execute("""
-            SELECT DISTINCT mgnifam_acc
-            FROM mgnifam
+        cursor = self.query("""
+        SELECT DISTINCT mgnifam_acc
+        FROM mgnifam
         """)
 
         # Initialize setf cluster accession numbers
@@ -99,42 +110,6 @@ class MGnifam(Database):
 
         # Return clusters accession numbers
         return clusters_acc
-
-    # Get next available MGDUF id
-    def get_next_id(self):
-        """ Retrieve next available MGDUF id
-
-        Return
-        (str)       Next available MGDUF id
-        """
-        # Make "alive" MGnifam entries cursor
-        alive_cursor = self.query('SELECT mgnifam_id FROM mgnifam')
-        # Make "dead" MGnifam entries cursor
-        dead_cursor = self.query('SELECT mgnifam_id FROM dead_mgnifam')
-        # Initialize maximum MGDUF id
-        mgduf_num, mgduf_max = 0, 0
-        # Define list of all results cursors
-        cursor_list = [alive_cursor, dead_cursor]
-        # Loop through each query result
-        for cursor in cursor_list:
-            # Loop through each retrieved row
-            for row in cursor:
-                # Retrieve current MGDUF
-                mgduf_str = row[0]
-                # Check if current MGDUF matches expected format
-                match = re.search(r'^MGDUF(\d+)$', mgduf_str)
-                # Case retrieved string does not match expected format
-                if not match:
-                    continue  # Skip to next row
-                # Retrieve MGDUF number from string
-                mgduf_num = int(match.group(1))
-                # Case current MGDUF number is greater than current maximum
-                if mgduf_num > mgduf_max:
-                    # Update current maximum MGDUF number
-                    mgduf_max = mgduf_num
-
-        # Return maximum MGDUF number + 1
-        return 'MGDUF{:04d}'.format(mgduf_max + 1)
 
     # Get next available MGYF accesion
     def get_next_accession(self):
@@ -158,7 +133,7 @@ class MGnifam(Database):
                 # Retrieve current MGDUF
                 mgyf_str = row[0]
                 # Check if current MGDUF matches expected format
-                match = re.search(r'^MGYF(\d+)$', mgyf_str)
+                match = re.search(r'^MGYF(\d+)', mgyf_str)
                 # Case retrieved string does not match expected format
                 if not match:
                     continue  # Skip to next row
@@ -171,6 +146,42 @@ class MGnifam(Database):
 
         # Return maximum MGDUF number + 1
         return 'MGYF{:05d}'.format(mgyf_max + 1)
+
+    # Get next available MGDUF id
+    def get_next_id(self):
+        """ Retrieve next available MGDUF id
+
+        Return
+        (str)       Next available MGDUF id
+        """
+        # Make "alive" MGnifam entries cursor
+        alive_cursor = self.query('SELECT mgnifam_id FROM mgnifam')
+        # Make "dead" MGnifam entries cursor
+        dead_cursor = self.query('SELECT mgnifam_id FROM dead_mgnifam')
+        # Initialize maximum MGDUF id
+        mgduf_num, mgduf_max = 0, 0
+        # Define list of all results cursors
+        cursor_list = [alive_cursor, dead_cursor]
+        # Loop through each query result
+        for cursor in cursor_list:
+            # Loop through each retrieved row
+            for row in cursor:
+                # Retrieve current MGDUF
+                mgduf_str = row[0]
+                # Check if current MGDUF matches expected format
+                match = re.search(r'^MGDUF(\d+)', mgduf_str)
+                # Case retrieved string does not match expected format
+                if not match:
+                    continue  # Skip to next row
+                # Retrieve MGDUF number from string
+                mgduf_num = int(match.group(1))
+                # Case current MGDUF number is greater than current maximum
+                if mgduf_num > mgduf_max:
+                    # Update current maximum MGDUF number
+                    mgduf_max = mgduf_num
+
+        # Return maximum MGDUF number + 1
+        return 'MGDUF{:04d}'.format(mgduf_max + 1)
 
     # Make MGnifam HMM library
     def make_hmmlib(self, accessions, path):
