@@ -18,7 +18,7 @@ from src.hmm.hmm import HMM
 from src.mgnifam import Cluster
 from src.utils import is_gzip, gunzip, as_bytes
 from subprocess import CalledProcessError
-from tempfile import mkdtemp
+from tempfile import mkdtemp, mkstemp
 from glob import glob
 from time import time
 import argparse
@@ -1055,7 +1055,7 @@ class Build(Pipeline):
             # Set root path as the same folder holding model
             root_path = os.path.dirname(model_path)
             # Define temporary folder holding DOMTBLOUT and TBLOUT results
-            results_path = mkdtemp(dir=root_path)
+            results_path = mkdtemp(prefix='hmmsearch', dir=root_path)
 
             # Initialize futures
             futures = dict()
@@ -1117,17 +1117,24 @@ class Build(Pipeline):
         n_cores (int)           Number of cores allocalble to run hmmsearch
         hmmsearch (HMMSearch)   Instance of hmmsearch object
         """
-
         # Define if input chunk is gzipped
         chunk_gzip = is_gzip(chunk_path)
         # Case input file is compressed
         if chunk_gzip:
-            # Get file extension from chunk path
-            _, chunk_ext = os.path.splitext(chunk_path)
+            # Define chunk name (remove directories)
+            chunk_name = os.path.basename(chunk_path)
             # Remove .gz extension
-            chunk_ext = re.sub(r'\.gz$', '', chunk_ext)
+            chunk_name = re.sub(r'\.gz$', '', chunk_name)
+            # Separate file extension from chunk name
+            chunk_name, chunk_ext = os.path.splitext(chunk_name)
+
+            # Define output directory path
+            out_dir = os.path.dirname(out_path)
+            # Make temporary file in output directory
+            _, unzip_path = mkstemp(dir=out_dir, suffix=chunk_ext)
+
             # Unzip target path and overwrite given target dataset
-            chunk_path = gunzip(in_path=chunk_path, out_suffix=chunk_ext)
+            chunk_path = gunzip(in_path=chunk_path, out_path=unzip_path)
 
         # Initialize tblout file path
         tblout_path = out_path + '.tblout'

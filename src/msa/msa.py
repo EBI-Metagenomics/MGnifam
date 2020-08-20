@@ -665,10 +665,10 @@ if __name__ == '__main__':
 
     # Define alignment path
     # aln_path = os.path.join(examples_path[0], 'SEED')
-    sto_path = os.path.join(ROOT_PATH, 'tmp/STO/MGYP000040147288', 'ALIGN.sto')
+    aln_path = os.path.join(ROOT_PATH, 'tmp/STO/MGYP000040147288', 'ALIGN.sto')
     # Read multiple sequence alignment
     # msa = MSA.from_aln(aln_path)
-    msa = MSA.from_sto(sto_path)
+    msa = MSA.from_sto(aln_path)
     # Check number of aligned sequences
     print('There are {:d} aligned sequences'.format(msa.aln.shape[0]), end=' ')
     print('with {:d} columns'.format(msa.aln.shape[1]), end=' ')
