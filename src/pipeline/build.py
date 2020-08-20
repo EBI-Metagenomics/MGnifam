@@ -4,19 +4,19 @@ from src.scheduler import LSFScheduler, LocalScheduler
 from src.dataset import LinClust, Fasta
 from src.sequences import fasta_iter
 from src.disorder import MobiDbLite
+from src.mgnifam import Cluster
+from src.utils import is_gzip, gunzip, as_bytes
 
 from src.msa.transform import Compose, OccupancyTrim, OccupancyFilter
 from src.msa.msa import MSA, Muscle
+
 from src.hmm.hmmbuild import HMMBuild
 from src.hmm.hmmsearch import HMMSearch
 from src.hmm.hmmalign import HMMAlign
 from src.hmm.hmmer import Tblout, Domtblout
 from src.hmm.hmmer import merge_scores, merge_hits
-from src.hmm.hmmer import to_tsv
 from src.hmm.hmm import HMM
 
-from src.mgnifam import Cluster
-from src.utils import is_gzip, gunzip, as_bytes
 from subprocess import CalledProcessError
 from tempfile import mkdtemp, mkstemp
 from glob import glob
@@ -734,7 +734,7 @@ class Build(Pipeline):
         if verbose:
             print('Making SEED alignments', end=' ')
             print('for {:d} clusters'.format(len(clusters_iter)), end=' ')
-            print('at {:s}...'.format(clusters_path), end='')
+            print('at {:s}...'.format(clusters_path), end=' ')
 
         # Initialize futures
         futures = dict()
@@ -1381,7 +1381,7 @@ class Build(Pipeline):
             # Define path to domtblout files
             domtblout_paths = glob(os.path.join(results_path, '*.domtblout'))
             # Parse search hits, retrieve significat scores and hits
-            sequence_scores, sequence_hits, domain_scores, domain_hits = self.parse_hmm_hits(
+            sequence_scores, domain_scores, sequence_hits, domain_hits = self.parse_hmm_hits(
                 tblout_paths=tblout_paths,
                 domtblout_paths=domtblout_paths,
                 e_value=self.uniprot_e_value,
@@ -1496,7 +1496,7 @@ class Build(Pipeline):
             # Define path to domtblout files
             domtblout_paths = glob(os.path.join(results_path, '*.domtblout'))
             # Parse search hits, retrieve significat scores and hits
-            sequence_scores, sequence_hits, domain_scores, domain_hits = self.parse_hmm_hits(
+            sequence_scores, domain_scores, sequence_hits, domain_hits = self.parse_hmm_hits(
                 tblout_paths=tblout_paths,
                 domtblout_paths=domtblout_paths,
                 e_value=self.mgnifam_e_value,
@@ -1681,7 +1681,7 @@ class Build(Pipeline):
         (OSError)                   In case DESC file can not be made
         """
         # Define clusters paths iterator
-        clusters_iter = glob(os.clusters_path, 'MGYP*')
+        clusters_iter = glob(os.path.join(clusters_path, 'MGYP*'))
         # Verbose
         if verbose:
             # Initialize timers
@@ -1696,19 +1696,27 @@ class Build(Pipeline):
             cluster_name = os.path.basename(cluster_path)
             # Make new mgnifam cluster DESC file
             cluster = Cluster(
-                name=cluster_name,
                 path=cluster_path,
-                desc='Protein of unknown function (MGDUF)',
-                auth=author_name,
+                name=cluster_name,
+                author=author_name,
                 seq_scores=sequence_scores.get(cluster_name),
-                dom_scores=domain_scores.get(cluster_name),
-                type='Family'
+                dom_scores=domain_scores.get(cluster_name)
             )
 
             # Define domain hits file path
             hits_path = os.path.join(cluster_path, 'HITS.tsv')
             # Write hits to .tsv file
-            to_tsv(hits=domain_hits, path=hits_path, sep=r'\t')
+            Domtblout.hits_to_tsv(
+                hits=domain_hits.get(cluster_name, []),
+                path=hits_path,
+                sep='\t'
+            )
+
+            # # DEBUG
+            # print('DEBUG CLUSTER')
+            # print('Sequence scores:', cluster.seq_scores)
+            # print('Domain_scores:', cluster.dom_scores)
+            # print(cluster.to_dict())
 
             # Store to file
             cluster.to_desc()
@@ -1953,7 +1961,7 @@ if __name__ == '__main__':
     )
     # Define walltime
     group.add_argument(
-        '-W', '--walltime', type=str, default='02:00',
+        '-W', '--walltime', type=str, default='48:00',
         help='How long can a process be kept alive'
     )
     # Retrieve arguments

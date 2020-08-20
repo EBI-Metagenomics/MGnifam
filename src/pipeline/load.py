@@ -1,16 +1,17 @@
-from src.scheduler import LSFScheduler, LocalScheduler
-from src.mgnifam import Cluster
+# from src.scheduler import LSFScheduler, LocalScheduler
+from src.hmm.hmmer import Tblout, Domtblout
 from src.hmm.hmmpress import HMMPress
 from src.hmm.hmmemit import HMMEmit
-from src.hmm.hmmer import Tblout, Domtblout
+from src.sequences import fasta_iter
+from src.mgnifam import Cluster
+
 from subprocess import CalledProcessError
-from tempfile import NamedTemporaryFile
-# from time import time
-from glob import iglob
+from tempfile import mkstemp
+from glob import glob, iglob
 from time import time
 import argparse
+import shutil
 import os
-import re
 
 
 class Load(object):
@@ -37,7 +38,7 @@ class Load(object):
         self.env = env
 
     # Run pipeline
-    def run(self, clusters_iter, mgnifam_version, verbose=False):
+    def run(self, release_path, clusters_iter, mgnifam_version, verbose=False):
         """ Load clusters to MGnifam database
 
         First, iterate through each given cluster path and load it into MGnifam
@@ -48,6 +49,7 @@ class Load(object):
         state.
 
         Args
+        release_path (str)          Path to release directory
         clusters_iter (list)        List of cluster directories paths
         mgnifam_version (str)       String for mgnifam version
         verbose (bool)              Whether to print out verbose log
@@ -61,61 +63,46 @@ class Load(object):
 
             # Load each cluster in database
             self.load_clusters(
-                clusters_iter,
+                clusters_iter=clusters_iter,
                 verbose=verbose
             )
 
-            # # Initialize sequence and domain scores dictionary
-            # sequence_scores = dict()
-            # domain_scores = dict()
-            # # Loop through each cluster
-            # for cluster_name in clusters.keys():
-            #     # Get current cluster
-            #     cluster = clusters[cluster_name]
-            #     # Update sequence scores dictionary
-            #     sequence_scores[cluster_name] = cluster.sequence_scores
-            #     # Update domain scores dictionary
-            #     domain_scores[cluster_name] = cluster.domain_scores
-            #
-            #
-            #
-            # # Get all HMM accession from MGnifam
-            # mgnifam_acc = self.mgnifam_db.get_accessions()
-            #
-            # # Define MGnifam HMM path
-            # mgnifam_hmm_path = os.path.join(clusters_path, 'MGnifam.hmm')
-            # # Fill MGnifam HMM library
-            # mgnifam_hmm = self.mgnifam_db.make_hmmlib(
-            #     clusters_acc=mgnifam_acc,
-            #     hmm_path=mgnifam_hmm_path
-            # )
-            #
-            # # Define MGnifam consensus path
-            # mgnifam_cns_path = os.path.join(clusters_path, 'MGnifam.fasta')
-            # # Make MGnifam consensus
-            # self.make_consensus(
-            #     clusters_acc=mgnifam_acc,
-            #     clusters_path=clusters_path,
-            #     fasta_path=mgnifam_cns_path
-            # )
-            #
-            # # Prepare HMM library for scan
-            # self.prepare_scan(
-            #     hmm_path=mgnifam_hmm.path,
-            #     verbose=verbose
-            # )
-            #
-            # # Define path to scan ouptut files
-            # mgnifam_out_path = os.path.join(clusters_path, 'MGnifam.out')
-            # mgnifam_seq_path = os.path.join(clusters_path, 'MGnifam.tblout')
-            # mgnifam_dom_path = os.path.join(clusters_path, 'MGnifam.domtblout')
-            # # Run mgnifam scan against consensus sequence
-            # self.make_scan(
-            #     # Set path to input HMM model/library
-            #     hmm_path=mgnifam_hmm.path,
-            #     # Set path to input FASTA file
-            #     fasta_path=os.path.join(clusters_path)
-            # )
+            # Initialize release directory
+            self.init_dir(
+                release_path=release_path
+            )
+
+            # Retrieve MGnifam clusters
+            mgnifam_dict = self.retrieve_clusters(
+                release_path=release_path,
+                verbose=verbose
+            )
+            # TODO Retrieve MGnifam clusters domain scores
+            # TODO Retrieve MGnifam clusters sequence scores
+
+            # Make MGnifam consensus
+            self.make_consensus(
+                clusters_path=release_path,
+                verbose=verbose
+            )
+
+            # Make MGnifam HMM model
+            self.prepare_scan(
+                clusters_path=release_path,
+                verbose=verbose
+            )
+
+            # Make MGnifam scan
+            tblout_path, domtblout_path = self.make_scan(
+                clusters_path=release_path,
+                verbose=verbose
+            )
+
+            # TODO Parse MGnifam scan
+            # TODO Kill clusters intercepting
+
+            # Raise exception
+            raise Exception()
 
         # If any exception got catched, rollback
         except Exception:
@@ -124,47 +111,8 @@ class Load(object):
             # Go on raising exception
             raise
 
-    # def get_clusters(self, clusters_path, verbose=False):
-    #     """ Initialize clusters dictionary
-    #
-    #     Loop through each cluster directory in given clusters path.
-    #     Moreover, it checks for foundamental files: HMM model file, domain
-    #     hits against MGnifam and SEED alignment and ALIGN full alignment.
-    #
-    #     Args
-    #     clusters_path (str)         Path where clusters DESC files are stored
-    #     verbose (bool)              Wether to print verbose output
-    #
-    #     Return
-    #     (dict)                      Dictionary mapping cluster name to cluster
-    #                                 instance
-    #     """
-    #     # Initialize clusters dictionary (accession: cluster)
-    #     clusters = dict()
-    #     # Loop through each DESC file in clusters directories
-    #     for cluster_path in iglob(os.path.join(clusters_path, 'MGYP*')):
-    #         # Load cluster from DESC file
-    #         cluster = Cluster.from_dir(cluster_path)
-    #
-    #         # Define HMM model path
-    #         model_path = os.path.join(cluster_path, 'HMM.model')
-    #
-    #         # Define SEED alignment path
-    #         seed_path = os.path.join(cluster_path, 'SEED.aln')
-    #
-    #         # Define ALIGN alignment path
-    #         align_path = os.path.join(cluster_path, 'ALIGN.aln')
-    #
-    #         # Store cluster
-    #         clusters[cluster.name] = cluster
-    #
-    #
-    #     # Verbose output
-    #     if verbose:
-    #         print('Loaded {:d} clusters'.format(len(clusters)), end=' ')
-    #         print('from {:s}'.fromat(clusters_path))
-    #     # Return clusters dictionary
-    #     return clusters
+        # Otherwise, commit changes
+        self.mgnifam_db.conn.commit()
 
     def load_clusters(self, clusters_iter, mgnifam_version, verbose=False):
         """ Load clusters into MGnifam database
@@ -179,22 +127,24 @@ class Load(object):
             time_beg, time_end = time(), 0.0
             # Show execution start
             print('Loading {:d}'.format(len(clusters_iter)), end=' ')
-            print('clusters to MGnifam database...', end=' ')
+            print('clusters to MGnifam database...')
 
         # Loop through each cluster path
         for cluster_path in clusters_iter:
-
-
             # Try loading cluster into database
             try:
-
                 # Parse cluster from directory
                 cluster = Cluster.from_dir(cluster_path)
                 # Load cluster to MGnifam database
                 cluster.to_mgnifam(self.mgnifam_db)
 
             # Case value error has been found
-            except ValueError:
+            except ValueError as err:
+                # Verbose
+                if verbose:
+                    # Print discarded cluster
+                    print('Cluster {:s} discarded:'.format(cluster.name))
+                    print(err.message.strip())
                 # Go to next iteration
                 pass
 
@@ -203,190 +153,236 @@ class Load(object):
             # Update timers
             time_end = time()
             # Show execution time
-            print('done in {:.0f} seconds'.format(time_end - time_beg))
+            print('...done in {:.0f} seconds'.format(time_end - time_beg))
 
-        # Initialize cluster accession and id
-        cluster_acc, cluster_id = '', ''
-        # Loop through each cluster
-        for cluster_name, cluster in clusters.items():
+    def init_release(clusters_path):
+        """ Initialize release directory structure
 
-            # Case cluster accession is set: get next one
-            if cluster_acc:
-                # Remove prefix
-                cluster_acc = int(re.sub(r'^MGYF', '', cluster_acc))
-                # Increase accession number, reset prefix
-                cluster_acc = 'MGYF{:05d}'.format(cluster_acc + 1)
+        Args
+        clusters_path (str)         Path to release directory
+        """
+        # Check if release directory is already in place
+        if not os.path.isdir(clusters_path):
+            # Try making release directory
+            os.mkdir(clusters_path)
 
-            # Case cluster id is set: get next one
-            if cluster_id:
-                # Remove prefix, cast to integer
-                cluster_id = int(re.sub(r'^MGDUF', '', cluster_id))
-                # Increase id, reset prefix
-                cluster_id = 'MGDUF{:04d}'.format(cluster_id + 1)
+    def retrieve_clusters(self, clusters_path, verbose=False):
+        """ Retrieve all MGnifam clusters
 
-            # Update cluster accession number and id
-            # NOTE: Avoid asking for new accession number and id again!
-            cluster.acc = cluster_acc
-            cluster.id = cluster_id
+        Loop through each accession in MGnifam dataset, retrieve it and make
+        cluster directory. Fill directory with HMM.model file.
 
-            # Define cluster SE
-            cluster.seed = '{:s} ({:s})'.format(cluster_name, mgnifam_version)
+        Args
+        clusters_path (str)         Path to release directory
+        verbose (bool)              Whether to print out verbose log
 
-            # Load cluster into database (updates cluster inplace)
-            self.mgnifam_db.load_cluster(cluster)
+        Return
+        (dict)                      Dictionary mapping cluster names to
+                                    clusters objects
+        """
+        # Set database reference
+        db = self.mgnifam_db
 
-            # TODO Load HMM model
-            self.mgnifam_db.load_model(cluster.get_path('HMM'))
-
-            # TODO Load SEED alignment
-            self.mgnifam_db.load_seed(cluster.get_path('SEED'))
-
-            # TODO Load ALIGN alignment
-            self.mgnifam_db.load_align(cluster.get_path('ALIGN'))
-
-            # TODO Load SEED alignment regions
-
-            # TODO Load ALIGN alignment regions
-
-            # Update current accession number and id
-            cluster_acc = cluster.acc
-            cluster_id = cluster.id
-
-            # Verbose
-            if verbose:
-                print(' '.join([
-                    'Cluster {:s}'.format(cluster.name),
-                    'has been loaded into database'
-                ]))
-
-        # Update timers
-        time_end = time()
         # Verbose
         if verbose:
-            print(' '.join([
-                'All {:d} clusters'.format(len(clusters)),
-                'have been loaded',
-                'in {:.0f} seconds'.format(time_end - time_beg)
-            ]))
+            # Initialize timers
+            time_beg, time_end = time(), 0.0
+            # Show execution start
+            print('Retrieving MGnifam clusters...', end=' ')
 
-    def make_consensus(self, clusters_acc, fasta_path, verbose=False):
+        # Initialize clusters dictionary
+        clusters_dict = dict()
+        # Retrieve all sequence accessions from MGnifam database
+        clusters_acc = db.get_accessions()
+        # Loop through all retrieved accessions
+        for acc in clusters_acc:
+            # Define cluster path
+            cluster_path = os.path.join(clusters_path, acc)
+
+            # Try making cluster directory
+            try:
+                # Case cluster  path does not exist
+                if not os.path.isdir(cluster_path):
+                    # Make cluster directory
+                    os.mkdir(cluster_path)
+
+                # Retrieve cluster
+                cluster = db.get_cluster(acccession=acc)
+                # Set cluster path
+                cluster.path = cluster_path
+                # Make DESC file
+                cluster.to_desc()
+
+                # Define HMM model path
+                model_path = os.path.join(cluster_path, 'HMM.model')
+                # Make HMM model
+                db.make_hmm_model(accession=acc, path=model_path)
+
+                # Append cluster to clusters dictionary
+                clusters_dict.setdefault(acc, cluster)
+
+            # Catch exceptions
+            except Exception:
+                # Discard cluster directory
+                os.remove(cluster_path)
+
+        # Verbose
+        if verbose:
+            # Update timers
+            time_end = time()
+            # Show execution time
+            print('done in {:0f} seconds'.format(time_end -  time_beg))
+
+        # Return clusters dictionary
+        return clusters_dict
+
+    def make_consensus(self, clusters_path, verbose=False):
         """ Generate consensus FASTA file
 
-        First, loop through each HMM in mgnifam, create HMM, run hmmemit
+        First, loop through each HMM in mgnifam and run hmmemit
         Then, append fasta sequences retireved from hmmemit to consensus
         fasta file
 
         Args
-        clusters_acc (set)          Set of cluster accession numbers
-        fasta_path (str)            Path to output fasta file
+        clusters_path (set)         Path to folder holding clusters directories
         verbose (bool)              Whether to print verbose output
         """
-        # Initialize timers
-        time_beg, time_end = time(), 0.0
-        # Open consensus file in write mode
-        consensus_file = open(fasta_path, 'w')
-        # Loop through each cluster accession number in MGnifam
-        for accession in clusters_acc:
-            # Make new temporary HMM model file
-            hmm_path = NamedTemporaryFile(delete=False, suffix='.hmm').name
-            # Retrieve HMM for current cluster accession number
-            self.mgnifam_db.make_hmm(
-                accession=accession,
-                path=hmm_path
-            )
+        # Define HMM models iterator
+        models_iter = glob(os.path.join(clusters_path, 'MGYF*', 'HMM.model'))
 
-            # Define temporary output file
-            out_path = NamedTemporaryFile(delete=False, suffix='.fasta').name
-            # Run hmmemit for current cluster
-            self.hmmemit(
-                consensus=True,
-                num_sequences=10,
-                out_path=out_path,
-                hmm_path=hmm_path
-            )
-
-            # Open temporary output file
-            with open(out_path, 'r') as out_file:
-                # Loop through each line in output file
-                for line in out_file:
-                    # Check if line is fasta header
-                    is_header = re.search('^>', line)
-                    # Case line is header
-                    if is_header:
-                        # Substitute line with current cluster accession
-                        line = '>' + accession + '\n'
-                    # Write line to consensus_file
-                    consensus_file.write(line)
-
-            # Remove temporary output file
-            os.unlink(out_path)
-            # Remove temporary HMM file
-            os.unlink(hmm_path)
-
-        # Update timers
-        time_end = time()
         # Verbose
         if verbose:
-            print(' '.join([
-                'Done consensus fasta file',
-                'for {:d} clusters'.format(len(clusters_acc)),
-                'in {:.0f} seconds'.format(time_end - time_beg)
-            ]))
+            # Initialize timers
+            time_beg, time_end = time(), 0.0
+            # Show execution start
+            print('Making consensus for', edn=' ')
+            print('{:d} clusters'.format(len(models_iter)), end=' ')
+            print('at {:s}...'.format(clusters_path), end=' ')
 
-        # Close consensus file
-        consensus_file.close()
+        # Define all clusters FASTA consensus file
+        cons_path = os.path.join(clusters_path, 'CONS.fa')
+        # Open all-clusters consensus FASTA file
+        with open(cons_path, 'w') as cons_file:
+            # Loop through each HMM model
+            for model_path in models_iter:
+                # Get cluster path
+                cluster_path = os.path.dirname(model_path)
+                # Define consensus fasta file path
+                fasta_path = os.path.join(cluster_path, 'CONS.fa')
 
-    def prepare_scan(self, hmm_path, verbose=False):
+                # Just call HMM emit
+                self.hmmemit(
+                    model_path=model_path,
+                    out_path=fasta_path
+                )
+
+                # Define consensus fasta sequences
+                fasta_sequences = dict()
+                # Open output fasta file
+                with open(fasta_path, 'r') as fasta_file:
+                    # Iterate through each fasta entry in given file
+                    for fasta_entry in fasta_iter(fasta_file):
+                        # Split entry into header and residues
+                        head, resid = tuple(fasta_entry.split('\n'))
+                        # Store fasta sequence
+                        fasta_sequences.setdefault(head, resid)
+
+                # Get cluster accession (cluster folder is named after accession)
+                cluster_acc = os.path.basename(cluster_path)
+                # Open fasta file in write mode
+                with open(fasta_path, 'w') as fasta_file:
+                    # Iterate through each stored fasta tuple(header, residues)
+                    for head, resid in fasta_sequences.items():
+                        # Write out fasta line(s)
+                        fasta_file.write('>' + cluster_acc + '\n' + resid + '\n')
+
+                # Open fasta file in read mode
+                with open(fasta_path, 'r') as fasta_file:
+                    # Copy model to library
+                    shutil.copyfileobj(fasta_file, cons_file)
+
+        # Verbose
+        if verbose:
+            # Update timers
+            time_end = time()
+            # Show execution time
+            print('done in {:.0f} seconds'.format(time_end - time_beg))
+
+    def prepare_scan(self, clusters_path, verbose=False):
         """ Prepare files for hmmscan
 
+        First, make single HMM library by joining together HMM models stored
+        in each cluster folder. Then, generate `.h3[pmif]` HMM dataset files.
+
         Args
-        hmm_path (str)      Path where input HMM model/library is stored
+        clusters_path (set)         Path to folder holding clusters directories
+        verbose (bool)              Whether to print verbose output
 
-        Return
-        (str)               Path to generated .h3p file
-        (str)               Path to generated .h3m file
-        (str)               Path to generated .h3i file
-        (str)               Path to generated .h3f file
+        Raise
+        (FileNotFoundError)         In case some output file has not been found
+        (Exception)                 In case generic exception happened, such as
+                                    errors during hmmpress execution
         """
-        # Try executing hmmpress
-        try:
-            # Run hmmpress script
-            self.hmmpress(
-                hmm_path=hmm_path,
-                overwrite=True
-            )
+        # Define clusters HMM model iterator
+        models_iter = glob(os.path.join(clusters_path, 'MGYF*', 'HMM.model'))
 
-            # Get current directory
-            hmm_dir = os.path.dirname(hmm_path)
+        # Verbose
+        if verbose:
+            # Initialize timers
+            time_beg, time_end = time(), 0.0
+            # Show execution start
+            print('Making HMM library and database', end=' ')
+            print('out of {:d} HMM models'.format(len(models_iter)), end=' ')
+            print('at {:s}...'.format(clusters_path), end=' ')
+
+        # Define HMM library path
+        library_path = os.path.join(clusters_path, 'HMM.library')
+        # Open output file
+        with open(library_path, 'w') as library_file:
+            # Loop through each HMM model file
+            for model_path in models_iter:
+                # Open input file
+                with open(model_path, 'r') as model_file:
+                    # Copy model to library
+                    shutil.copyfileobj(model_file, library_file)
+
+        # Try running hmmpress
+        try:
+            # Run hmmpress script against library
+            self.hmmpress(model_path=library_path, overwrite=True)
             # Initialize generated file paths
-            h3p_path = next(iglob(hmm_dir + '/*.h3p'))
-            h3m_path = next(iglob(hmm_dir + '/*.h3m'))
-            h3i_path = next(iglob(hmm_dir + '/*.h3i'))
-            h3f_path = next(iglob(hmm_dir + '/*.h3f'))
+            h3p_path = next(iglob(clusters_path + '/*.h3p'))
+            h3m_path = next(iglob(clusters_path + '/*.h3m'))
+            h3i_path = next(iglob(clusters_path + '/*.h3i'))
+            h3f_path = next(iglob(clusters_path + '/*.h3f'))
 
             # Check if all the files are in place
             if not (h3p_path and h3m_path and h3i_path and h3f_path):
                 # Raise file not found exception
                 raise FileNotFoundError('\n'.join([
-                    'Error: some files have not been generated:',
+                    'some files have not been generated:',
                     '- h3p: {:s}'.format(os.path.basename(h3p_path)),
                     '- h3m: {:s}'.format(os.path.basename(h3m_path)),
                     '- h3i: {:s}'.format(os.path.basename(h3i_path)),
                     '- h3f: {:s}'.format(os.path.basename(h3f_path))
                 ]))
 
-            # Return generated files path
-            return h3p_path, h3m_path, h3i_path, h3f_path
-
         # Intercept process error
         except CalledProcessError as err:
-            # Raise an explanatory exception
+            # Raise exception
             raise Exception('\n'.join([
-                'Error: hmmpress script returned {}:'.format(err.returncode),
+                'hmmpress script returned {}:'.format(err.returncode),
                 err.stderr.strip()
             ]))
 
-    def make_scan(self, hmm_path, fasta_path, verbose=False):
+        # Verbose
+        if verbose:
+            # Update timers
+            time_end = time()
+            # Show execution time
+            print('done in {:.0f} seconds'.format(time_end - time_beg))
+
+    def make_scan(self, clusters_path, verbose=False):
         """ Scan MGnifam
 
         Scan all MGnifam clusters in root directory, using previously
@@ -394,34 +390,61 @@ class Load(object):
         HMM model/library.
 
         Args
-        hmm_path (str)          Path to input HMM model/library
-        fasta_path (str)        Path to input FASTA file
-        verbose (bool)          Whether to print verbose output
+        clusters_path (str)         Path to clusters directory
+        verbose (bool)              Whether to print verbose output
 
         Return
-        (str)                   Path to output file
-        (str)                   Path to tblout file
-        (str)                   Path to domtblout file
+        (str)                       Path to output file
+        (str)                       Path to tblout file
+        (str)                       Path to domtblout file
+
+        Raise
+        (FileNotFoundError)         In case some file has not been found
+        (Exception)                 In case generic exception happened, such as
+                                    errors during hmmpress execution
         """
+        # Define HMM library path
+        library_path = os.path.join(clusters_path, 'HMM.library')
+        # Initialize FASTA consensus file path
+        cons_path = os.path.join(clusters_path, 'CONS.fa')
+
+        # Verbose
+        if verbose:
+            # Initialize timers
+            time_beg, time_end = time(), 0.0
+            # Show execution start
+            print('Scanning clusters at', end=' ')
+            print('{:s}...'.format(clusters_path), end=' ')
+
+        # Case cannot find HMM library file
+        if not os.path.isfile(library_path):
+            # Raise exception
+            raise FileNotFoundError(
+                'could not find HMM library at {:s}'.format(library_path)
+            )
+
+        # Case cannot find HMM library file
+        if not os.path.isfile(cons_path):
+            # Raise exception
+            raise FileNotFoundError(
+                'could not find consensus FASTA file at {:s}'.format(cons_path)
+            )
+
         # Try executing hmmscan
         try:
-
-            # Get current HMM model directory
-            hmm_dir = os.path.dirname(hmm_path)
-            # Define output file paths
-            out_path = hmm_dir + '/MGnifam.out'  # Output file
-            tblout_path = hmm_dir + '/MGnifam.tblout'  # Sequence hits
-            domtblout_path = hmm_dir + '/MGnifam.domtblout'  # Domain hits
-
+            # Define tblout path
+            tblout_path = mkstemp(dir=clusters_path, suffix='.tblout')
+            # Define domtblout path
+            domtblout_path = mkstemp(dir=clusters_path, suffix='.domtblout')
             # Run hmmscan, make .domtblout and .tblout files
             self.hmmscan(
                 # Set input HMM model path
                 # NOTE: .h3[mifp] files must be in the same directory
-                hmm_path=hmm_path,
+                hmm_path=library_path,
                 # Set input FASTA file path
-                fasta_path=fasta_path,
-                # Define output path
-                out_path=out_path,
+                fasta_path=cons_path,
+                # # Define output path
+                # out_path=out_path,
                 # Define sequence hits output path
                 tblout_path=tblout_path,
                 # Define domain hits output path
@@ -434,16 +457,23 @@ class Load(object):
                 domain_eval=(1000, )
             )
 
-            # Return result paths
-            return out_path, tblout_path, domtblout_path
-
-        # Intercept subprocess error
+        # Intercept hmmscan execution error
         except CalledProcessError as err:
-            # Raise new exception
-            raise Exception('\n'.join([
-                'Error: hmmscan returned {}'.format(err.returncode),
-                err.stderr.strip()
-            ]))
+            # Raise exception
+            raise Exception('hmmscan returned {}:\n{}'.format(
+                                err.returncode,
+                                err.stderr.strip()
+                            ))
+
+        # Verbose
+        if verbose:
+            # Update timers
+            time_end = time()
+            # Show execution time
+            print('done in {:.0f} seconds'.format(time_end - time_beg))
+
+        # Return either tblout and domtblout paths
+        return tblout_path, domtblout_path
 
     def parse_scan(self, sequence_scores, domain_scores, tblout_path, domtblout_path, verbose=False):
         """ Parse hmmscan output files
@@ -486,10 +516,15 @@ if __name__ == '__main__':
 
     # Argparse
     parser = argparse.ArgumentParser(description='Build MGnifam clusters')
-    # Define path to input directory
+    # Define path to input clusters files
     parser.add_argument(
         '-i', '--in_path', nargs='+', type=str, required=True,
         help='Path to input cluster directories'
+    )
+    # Define path to release directory
+    parser.add_argument(
+        '-o', '--out_path', type=str, required=True,
+        help='Path to release directory'
     )
     # # Define output path
     # parser.add_argument(
@@ -591,11 +626,11 @@ if __name__ == '__main__':
         '-v', '--verbose', type=int, default=1,
         help='Print verbose output'
     )
-    # # Define E-value significance threshold for both UniProt and MGnifam
-    # parser.add_argument(
-    #     '-e', '--e_value', type=float, default=0.01,
-    #     help='E-value threhsold for both UniProt and MGnifam comparisons'
-    # )
+    # Define E-value significance threshold for both MGnifam and Pfam
+    parser.add_argument(
+        '-e', '--e_value', type=float, default=0.01,
+        help='E-value threhsold for both UniProt and MGnifam comparisons'
+    )
     # Define environmental variables .json file
     parser.add_argument(
         '--env_path', type=str, required=False,
@@ -727,5 +762,3 @@ if __name__ == '__main__':
     #         'scheduler type can be one among `Local` or `LSF`',
     #         '%s has been chosen instead' % args.scheduler_type
     #     ]))
-
-    #

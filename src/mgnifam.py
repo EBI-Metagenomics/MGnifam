@@ -1,4 +1,5 @@
 # Dependencies
+from src.hmm.hmmer import Domtblout
 from src.hmm.hmm import HMM
 from src.msa.msa import MSA
 import os
@@ -9,8 +10,8 @@ class Cluster(object):
 
     # Constructor
     def __init__(
-        self, accession='', id='', name='', author='Anonymous', path='',
-        seq_scores=(25.0, 25.0, 25.0), dom_scores=(25.0, 25.0, 25.0)
+        self, accession='', id='', name='', author='', version='', path='',
+        seq_scores=(25.0, 25.0, 25.0), dom_scores=(25.0, 25.0, 25.0),
     ):
         # Store path to file
         self.path = path
@@ -18,7 +19,8 @@ class Cluster(object):
         self.accession = accession  # Accession (primary key)
         self.id = id  # Identifier
         self.name = name  # Name of the cluster (SEED sequence)
-        self.author = author
+        self.author = author  # Author
+        self.version = version  # MGnifam version
         # Store (TC, NC, GA) scores for sequences
         self.seq_scores = seq_scores
         # Store (TC, NC, GA) scores for domains
@@ -49,6 +51,14 @@ class Cluster(object):
         return 'Family'
 
     @property
+    def source(self):
+        return '{0:s} ({1:s})'.format(self.name, self.version)
+
+    @property
+    def desc_path(self):
+        return os.path.join(self.path, 'DESC')
+
+    @property
     def hmm_path(self):
         return os.path.join(self.path, 'HMM.model')
 
@@ -67,10 +77,12 @@ class Cluster(object):
     def to_dict(self):
         return {
             'name': self.name,
-            'desc': self.desc,
-            'auth': self.auth,
+            'accession': self.accession,
+            'id': self.id,
+            'description': self.description,
+            'author': self.author,
             'type': self.type,
-            'seed': self.seed,
+            'source': self.source,
             'path': self.path,
             'seq_scores': list(self.seq_scores),
             'dom_scores': list(self.dom_scores)
@@ -106,12 +118,44 @@ class Cluster(object):
         return cls.is_param(line=line, param='AU', default=default)
 
     @classmethod
-    def is_seed(cls, line, default=''):
+    def is_source(cls, line, default=''):
         return cls.is_param(line=line, param='SE', default=default)
 
     @classmethod
-    def is_type(cls, line, default=''):
-        return cls.is_param(line=line, param='TP', default=default)
+    def is_name(cls, line, default=''):
+        # Return full parameter string `<name> (<version>)`
+        param = cls.is_source(line=line, default='')
+
+        # Case line is empty
+        if param:
+            # Try matching name
+            match = re.search(r'^(\S+)', param)
+
+            # Case name is not matched
+            if match:
+                # Otherwise, return retrieved name
+                return str(match.group(1))
+
+        # Return default value
+        return default
+
+    @classmethod
+    def is_version(cls, line, default=''):
+        # Return full parameter string `<name> (<version>)`
+        param = cls.is_source(line=line, default='')
+
+        # Case line is not empty
+        if param:
+            # Try matching version
+            match = re.search(r'\((.*)\)$', param)
+
+            # Case version is matched
+            if match:
+                # Otherwise, return retrieved name
+                return str(match.group(1))
+
+        # Return default value
+        return default
 
     @classmethod
     def is_score(cls, line, param='TC', default=[None, None]):
@@ -151,7 +195,7 @@ class Cluster(object):
     def from_desc(cls, path, cluster_name='', cluster_path=''):
         # Initialize cluster parameters dictionary
         params = {
-            'acc': '', 'id': '', 'desc': '', 'auth': '', 'type': '',
+            'acc': '', 'id': '', 'auth': '', 'version': '',
             'name': cluster_name, 'path': cluster_path,
             'seq_scores': [None, None, None],
             'dom_scores': [None, None, None]
@@ -164,12 +208,15 @@ class Cluster(object):
                 params['acc'] = cls.is_accession(line, params['acc'])
                 # Case line is id
                 params['id'] = cls.is_id(line, params['acc'])
-                # Case line is description
-                params['desc'] = cls.is_description(line, params['desc'])
+                # # Case line is description
+                # params['desc'] = cls.is_description(line, params['desc'])
                 # Case line is author name
                 params['auth'] = cls.is_author(line, params['auth'])
-                # Case line is cluster type
-                params['type'] = cls.is_type(line, params['type'])
+                # # Case line is cluster type
+                # params['type'] = cls.is_type(line, params['type'])
+                # Retrieve name and version out pf source line
+                params['name'] = cls.is_name(line, params['name'])
+                params['version'] = cls.is_version(line, params['version'])
                 # Case line is TC item
                 params['seq_scores'][0], params['dom_scores'][0] = cls.is_tc(
                     default=(params['seq_scores'][0], params['dom_scores'][0]),
@@ -199,13 +246,12 @@ class Cluster(object):
 
     def to_desc(self):
         # Open description file
-        with open(self.get_path('DESC'), 'w') as file:
+        with open(self.desc_path, 'w') as file:
             # Write attributes
-            file.write('AC   {:s}\n'.format(self.acc))
-            file.write('ID   {:s}\n'.format(self.name))
-            file.write('DE   {:s}\n'.format(self.desc))
-            file.write('AU   {:s}\n'.format(self.auth))
-            # file.write('SE   {:s}\n'.format(self.se))
+            file.write('AC   {:s}\n'.format(self.accession))
+            file.write('ID   {:s}\n'.format(self.id))
+            file.write('DE   {:s}\n'.format(self.description))
+            file.write('AU   {:s}\n'.format(self.author))
             # Write gathering threshold (GA) for sequence, domain pair
             file.write('GA   {seq_ga:.02f} {dom_ga:.02f};\n'.format(
                 seq_ga=self.seq_scores[2],
@@ -221,15 +267,17 @@ class Cluster(object):
                 seq_nc=self.seq_scores[1],
                 dom_nc=self.dom_scores[1]
             ))
+            # Wirte source
+            file.write('SE   {:s}'.format(self.source))
             # Write family
-            file.write('TP   {:s}'.format(self.family))
+            file.write('TP   {:s}'.format(self.type))
 
     # Load cluster to MGnifam database
-    def to_mgnifam(self, mgnifam_db):
+    def to_mgnifam(self, db):
         """ Load cluster to MGnifam database
 
         Args
-        mgnifam_db (database.MGnifam)       MGnifam database instance, must be
+        db (database.MGnifam)               MGnifam database instance, must be
                                             authenticated
 
         Raise
@@ -240,7 +288,7 @@ class Cluster(object):
                                             not correctly formatted
         """
         # Retrieve next available accession number
-        next_accession = mgnifam_db.get_next_accession()
+        next_accession = db.get_next_accession()
         # Case accession is not set
         if not self.accession_:
             # Set accession number
@@ -256,7 +304,7 @@ class Cluster(object):
             ]))
 
         # Retrieve next available id
-        next_id = mgnifam_db.get_next_id()
+        next_id = db.get_next_id()
         # Case id is not set
         if not self.id_:
             # Set accession number
@@ -272,29 +320,53 @@ class Cluster(object):
             ]))
 
         # Load HMM model file
-        model = HMM.from_file(self.model_path)
+        hmm_model = HMM.from_file(self.model_path)
         # Check HMM model name
-        if not model.name:
+        if not hmm_model.name:
             # Raise exception
             raise ValueError('HMM model has no name set')
         # Check HMM model length
-        if not model.length:
+        if not hmm_model.length:
             # Raise exception
             raise ValueError('HMM model length is not valid')
 
         # Load SEED alignment
-        seed = MSA.from_aln(self.seed_path)
+        seed_msa = MSA.from_aln(self.seed_path)
         # Check SEED alignment file
-        if seed.is_empty():
+        if seed_msa.is_empty():
             # Raise exception
             raise ValueError('SEED alignment shape is not valid')
 
         # Check ALIGN alignment file
-        align = MSA.from_aln(self.align_path)
+        align_msa = MSA.from_aln(self.align_path)
         # Check ALIGN file
-        if align.is_empty():
+        if align_msa.is_empty():
             # Raise exception
             raise ValueError('ALIGN alignment shape is not valid')
 
-        # Abstract
-        raise NotImplementedError
+        # Check HITS.tsv file
+        hits = Domtblout.hits_from_tsv(self.hits_path)
+        # Case domain hits list is empty
+        if not len(hits):
+            # Raise exception
+            raise ValueError('HITS list shape is empty')
+
+        # Load cluster into database
+        db.load_cluster(
+            cluster=self,
+            hmm_model=hmm_model,
+            seed_msa=seed_msa,
+            align_msa=align_msa
+        )
+
+        # Load HMM model into database
+        db.load_hmm_model(self.accession, path=self.hmm_path)
+
+        # Load SEED alignment into database
+        db.load_seed_msa(self.accession, path=self.seed_path)
+
+        # Load SEED hits into database
+        db.load_seed_hits(self.accession, path=self.seed_path)
+
+        # Load ALIGN hits into database
+        db.load_align_hits(self.accession, path=self.hits_path)

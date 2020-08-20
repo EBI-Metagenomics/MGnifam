@@ -15,6 +15,10 @@ class HMM(object):
         self.length = length
         self.alphabet = alphabet
 
+    # Retrieve length
+    def __len__(self):
+        return self.length
+
     @classmethod
     def get_name(cls, string):
         # Check if input string matches name string

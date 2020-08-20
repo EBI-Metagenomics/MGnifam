@@ -210,6 +210,67 @@ class Tblout(object):
         # Return hits dictionary
         return hits
 
+    @classmethod
+    def hits_to_tsv(cls, hits, path, sep='\t'):
+        """ Write list of hits to file
+
+        Automatically generates header by looking to first hit dictionary keys.
+        Then, loops through all the hits in the given list and adds them to
+        given output path.
+
+        Args
+        hits (list)     List of hits dictionaries
+        path (str)      Path to output tsv file
+        sep (str)       Column sceparator in output .tsv file
+
+        Raise
+        (OSError)       In case it could not create output file
+        """
+        # Open output file
+        with open(path, 'w') as file:
+            # Retrieve header
+            header = sep.join([col for col in cls.columns]) + '\n'
+            # Write header line
+            file.write(header)
+            # Loop through all hits
+            for i, hit in enumerate(hits):
+                # Define current line
+                line = sep.join([hit[col] for col in cls.columns]) + '\n'
+                #  Write current line to file
+                file.write(line)
+
+    @classmethod
+    def hits_from_tsv(cls, path, sep='\t'):
+        """ Read .tsv file, load hits list
+
+        Args
+        path (str)      Path to file holding hits list
+        sep (str)       Column sceparator in output .tsv file
+
+        Return
+        (list)          List of hits dictionaries
+        """
+        # Initialize list of hits
+        hits = list()
+        # Open input file
+        with open(path, 'w') as file:
+            # Read first line (header)
+            line = re.sub(r'[\n\r]', '', next(file))
+            # Split line in columns
+            columns = [col for col in cls.columns]
+
+            # Loop through all hits
+            for line in file:
+                # Split current line
+                line = line.split(sep)
+                # Define current hit
+                hit = {columns[i]: line[i] for i in range(len(line))}
+                # Store hit
+                hits.append(hit)
+
+        # Return hits list
+        return hits
+
 
 class Domtblout(Tblout):
 
@@ -220,12 +281,16 @@ class Domtblout(Tblout):
     columns = {
         'target_name': 0,
         'query_name': 3,
-        'e_value': 12,  # Use independent E-value
-        'bit_score': 13,
+        'e_value': 12,  # Domain independent e-value
+        'bit_score': 13,  # Domain bit-score
+        'sequence_e_value': 6,  # Sequence e-value
+        'sequence_bit_score': 7,  # Sequence bit-score
         'alignment_beg': 17,
         'alignment_end': 18,
         'envelope_beg': 19,
-        'envelope_end': 20
+        'envelope_end': 20,
+        'model_beg': 15,
+        'model_end': 16
     }
 
 
@@ -284,34 +349,34 @@ def merge_hits(*args):
     return hits
 
 
-# Utility: parse hits to TSV
-def to_tsv(hits, path, sep=r'\t'):
-    """ Parse list of hits to file
-
-    Automatically generates header by looking to first hit dictionary keys.
-    Then, loops through all the hits in the given list and adds them to given
-    output path.
-
-    Args
-    hits (list)     List of hits dictionary
-    path (str)      Path to output tsv file
-    sep (str)       Column sceparator in output .tsv file
-
-    Raise
-    (OSError)       In case it could not create output file
-    """
-    # Open output file
-    with open(path, 'w') as file:
-        # Retrieve header
-        header = sep.join([col for col in hits[0]]) + '\n'
-        # Write header line
-        file.write(header)
-        # Loop through all hits
-        for i, hit in enumerate(hits):
-            # Define current line
-            line = sep.join([hit[col] for col in hit]) + '\n'
-            #  Write current line to file
-            file.write(line)
+# # Utility: parse hits to TSV
+# def to_tsv(hits, path, sep=r'\t'):
+#     """ Parse list of hits to file
+#
+#     Automatically generates header by looking to first hit dictionary keys.
+#     Then, loops through all the hits in the given list and adds them to given
+#     output path.
+#
+#     Args
+#     hits (list)     List of hits dictionary
+#     path (str)      Path to output tsv file
+#     sep (str)       Column sceparator in output .tsv file
+#
+#     Raise
+#     (OSError)       In case it could not create output file
+#     """
+#     # Open output file
+#     with open(path, 'w') as file:
+#         # Retrieve header
+#         header = sep.join([col for col in hits[0]]) + '\n'
+#         # Write header line
+#         file.write(header)
+#         # Loop through all hits
+#         for i, hit in enumerate(hits):
+#             # Define current line
+#             line = sep.join([hit[col] for col in hit]) + '\n'
+#             #  Write current line to file
+#             file.write(line)
 
 # Unit testing
 if __name__ == '__main__':
