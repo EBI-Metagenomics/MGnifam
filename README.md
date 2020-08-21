@@ -396,14 +396,13 @@ Pfam database options:
 `ALIGN.aln` are looking good.
 
 2. Finalize load pipeline
-
-  - Load HMM scores in MGnifam database, such as `viterbi` and `msv` (update
-    `src/hmm/hmm.py` class): currently empty fields get loaded
-
-  - Test hmmscan procedure: are passing entries looking good?
-
-  - Integrate fragmentation test (should this be done a priori, during
+    - Load HMM scores in MGnifam database, such as `viterbi` and `msv` (update
+      `src/hmm/hmm.py` class): currently empty fields get loaded
+    - Test hmmscan procedure: are passing entries looking good?
+    - Integrate fragmentation test (should this be done a priori, during
   automatic SEED alignment? Should it be extended to ALIGN alignment?)
+    - Reactivate `HITS.tsv` checks when uploading (`HITS.tsv` parsing bug
+      fixed!)
 
 3. Merge build and load pipelines: just merge `build.py` and `load.py`
 pipelines into a single file, using build clusters as load input.
