@@ -1,10 +1,12 @@
 # Dependencies
+from src.clusters import MGnifam as MGCluster
+from src.clusters import Pfam as PFCluster
 from src.hmm.hmmer import Domtblout
-from src.mgnifam import Cluster
 from src.hmm.hmm import HMM
 from src.msa.msa import MSA
-from time import time
 import mysql.connector as dbms
+from datetime import datetime
+from time import time
 import json
 import os
 import re
@@ -39,11 +41,11 @@ class Database(object):
         # Define autocommit
         self.autocommit = False
         # Define cursor
-        self.cursor_ = self.conn_.cursor()
+        self.cursor_ = self.conn.cursor()
 
     def close(self):
         # Close connection
-        self.conn_.close()
+        self.conn.close()
         # Clear cursor
         self.cursor_ = None
         # Clear connection
@@ -68,6 +70,10 @@ class Database(object):
         return self.cursor
 
     @property
+    def conn(self):
+        return self.conn_
+
+    @property
     def cursor(self):
         return self.cursor_
 
@@ -87,6 +93,11 @@ class Database(object):
 
 
 class MGnifam(Database):
+
+    # Constructor
+    def __init__(self, user='', password='', host='', port=3309, autocommit=False):
+        # Parsent super constructor
+        super().__init__(user=user, password=password, host=host, port=port, database='mgnifam', autocommit=autocommit)
 
     # Get clusters accessions
     def get_accessions(self):
@@ -217,8 +228,8 @@ class MGnifam(Database):
             model_string = file.read()
 
             # Define query
-            query = """ INSERT INTO mgnifam_hmm (mgnifam_acc, hmm)
-                        VALUES ('{:s}', '{:s}'); """
+            query = """ INSERT INTO mgnifam_HMM (mgnifam_acc, hmm)
+                        VALUES ('{:s}', '{:s}') """
             # Set values into query
             query = query.format(accession, model_string)
             # Execute query
@@ -382,6 +393,9 @@ class MGnifam(Database):
 
         Return
         (Cluster)               Cluster instance
+        (int)                   HMM model length
+        (int)                   SEED alignment length (number of sequences)
+        (int)                   ALIGN alignment length (number of sequences)
 
         Raise
         (KeyError)              In case cluster associated to given accession
@@ -389,8 +403,9 @@ class MGnifam(Database):
         """
         # Initialize query
         query = """ SELECT mgnifam_acc, mgnifam_id, author,
-                           sequence_tc, sequence_nc, sequence_ga,
-                           domain_tc, domain_nc, domain_ga
+                           sequence_TC, sequence_NC, sequence_GA,
+                           domain_TC, domain_NC, domain_GA,
+                           model_length, num_seed, num_full
                     FROM mgnifam
                     WHERE mgnifam_acc = '{:s}'; """
         # Set cluster accession number
@@ -405,14 +420,20 @@ class MGnifam(Database):
             # Raise exception
             raise KeyError('couold not find cluster for accession {:s}'.format(accession))
 
-        # Make and return retrieved cluster
-        return Cluster(
+        # Make an instance out of retrieved cluster
+        cluster = MGCluster(
             accession=row[0], id=row[1], author=row[2],
             # Set domain scores
             dom_scores=(row[3], row[4], row[5]),
             # Set sequence scores
             seq_scores=(row[6], row[7], row[8])
         )
+
+        # Retrieve HMM model and alignments lengths
+        model_len, seed_len, align_len = row[9], row[10], row[11]
+
+        # Return either cluster and lengths
+        return cluster, model_len, seed_len, align_len
 
     # Kill cluster (move to dead MGnifam)
     def kill_cluster(self, accession, author):
@@ -473,25 +494,33 @@ class MGnifam(Database):
         INSERT INTO mgnifam (
             mgnifam_acc, mgnifam_id, description, author, seed_source, type,
             sequence_TC, sequence_NC, sequence_GA,
-            domain_TC, domain_NC,domain_GA
+            domain_TC, domain_NC, domain_GA,
             model_length, num_seed, num_full,
+            buildMethod, searchMethod,
+            msv_lambda, msv_mu,
+            viterbi_lambda, viterbi_mu,
+            forward_lambda, forward_tau,
             updated, created
         )
         VALUES (
-            '{mgnifam_acc:s}', '{mgnifam_id:str}', '{mgnifam_de:s}',
+            '{mgnifam_acc:s}', '{mgnifam_id:s}', '{mgnifam_de:s}',
             '{mgnifam_au:s}', '{mgnifam_se:s}', '{mgnifam_tp:s}',
             {sequence_tc:.02f}, {sequence_nc:.02f}, {sequence_ga:.02f},
             {domain_tc:.02f}, {domain_nc:.02f}, {domain_ga:.02f},
             {hmm_len:d}, {seed_len:d}, {align_len:d},
-            {updated:d}, {created:d}
-        ); """
+            '{build_method:s}', '{search_method:s}',
+            {msv_lambda:.02f}, {msv_mu:.02f},
+            {viterbi_lambda:.02f}, {viterbi_mu:.02f},
+            {forward_lambda:.02f}, {forward_tau:.02f},
+            '{updated:s}', '{created:s}'
+        ) """
 
         # Define current created and updated time
-        updated = created = time()
+        updated = created = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         # Define sequence scores
-        sequence_tc, sequence_nc, sequence_ga = cluster.seq_scores
+        sequence_tc, sequence_nc, sequence_ga = tuple(cluster.seq_scores)
         # Define domain scores
-        domain_tc, domain_nc, domain_ga = cluster.dom_scores
+        domain_tc, domain_nc, domain_ga = tuple(cluster.dom_scores)
         # Define HMM model length
         hmm_len = len(hmm_model)
         # Defne SEED alignment length
@@ -499,13 +528,18 @@ class MGnifam(Database):
         # Define ALIGN alignment length
         align_len = align_msa.shape[0]
         # Add values to query string
-        query.format(
-            mgnifam_acc=cluster.acc, mgnifam_id=cluster.id,
-            mgnifam_de=cluster.desc, mgnifam_tp=cluster.type,
-            sequence_tc=sequence_tc, domain_tc=domain_tc,
-            sequence_nc=sequence_nc, domain_nc=domain_nc,
-            sequence_ga=sequence_ga, domain_ga=domain_ga,
+        query = query.format(
+            mgnifam_acc=cluster.accession, mgnifam_id=cluster.id,
+            mgnifam_de=cluster.description, mgnifam_au=cluster.author,
+            mgnifam_se=cluster.source, mgnifam_tp=cluster.type,
+            sequence_tc=float(sequence_tc), domain_tc=float(domain_tc),
+            sequence_nc=float(sequence_nc), domain_nc=float(domain_nc),
+            sequence_ga=float(sequence_ga), domain_ga=float(domain_ga),
             hmm_len=hmm_len, seed_len=seed_len, align_len=align_len,
+            build_method='', search_method='',
+            msv_lambda=0.0, msv_mu=0.0,
+            viterbi_lambda=0.0, viterbi_mu=0.0,
+            forward_lambda=0.0, forward_mu=0.0, forward_tau=0.0,
             updated=updated, created=created
         )
         # Execute query
@@ -513,6 +547,11 @@ class MGnifam(Database):
 
 
 class Pfam(Database):
+
+    # Constructor
+    def __init__(self, user='', password='', host='', port=3309, autocommit=False):
+        # Parsent super constructor
+        super().__init__(user=user, password=password, host=host, port=port, database='pfam_live', autocommit=autocommit)
 
     def get_accessions(self):
         """ Retrieve all accession numbers from Pfam
@@ -629,6 +668,58 @@ class Pfam(Database):
         hmm.path = path
         # Return HMM instance
         return hmm
+
+    # Retrieve cluster
+    def get_cluster(self, accession):
+        """ Retrieve cluster from database
+
+        Args
+        accession (str)         Accession number of the cluster to retrieve
+
+        Return
+        (Cluster)               Cluster instance
+        (int)                   HMM model length
+        (int)                   SEED alignment length (number of sequences)
+        (int)                   ALIGN alignment length (number of sequences)
+
+        Raise
+        (KeyError)              In case cluster associated to given accession
+                                number has not been found
+        """
+        # Initialize query
+        query = """ SELECT pfamA_acc, pfamA_id, description, deposited_by, type,
+                           sequence_TC, sequence_NC, sequence_GA,
+                           domain_TC, domain_NC, domain_GA,
+                           model_length, num_seed, num_full
+                    FROM mgnifam
+                    WHERE mgnifam_acc = '{:s}'; """
+        # Set cluster accession number
+        query = query.format(accession)
+        # Execute query
+        cursor = self.execute(query)
+
+        # Get first retrieved row
+        row = next(cursor)
+        # Case no row has been retrieved
+        if not row:
+            # Raise exception
+            raise KeyError('couold not find cluster for accession {:s}'.format(accession))
+
+        # Make an instance out of retrieved cluster
+        cluster = PFCluster(
+            # Set cluster attributes
+            accession=row[0], id=row[1], description=row[3], author=row[3], type=row[4],
+            # Set domain scores
+            dom_scores=(row[5], row[6], row[7]),
+            # Set sequence scores
+            seq_scores=(row[8], row[9], row[10])
+        )
+
+        # Retrieve HMM model and alignments lengths
+        model_len, seed_len, align_len = row[11], row[12], row[13]
+
+        # Return either cluster and lengths
+        return cluster, model_len, seed_len, align_len
 
 
 # Unit testing

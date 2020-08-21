@@ -250,23 +250,28 @@ class Tblout(object):
         Return
         (list)          List of hits dictionaries
         """
+        # Check if file is empty
+        is_empty = (os.stat(path).st_size == 0)
+
         # Initialize list of hits
         hits = list()
-        # Open input file
-        with open(path, 'w') as file:
-            # Read first line (header)
-            line = re.sub(r'[\n\r]', '', next(file))
-            # Split line in columns
-            columns = [col for col in cls.columns]
+        # Case file is not empty
+        if not is_empty:
+            # Open input file
+            with open(path, 'r') as file:
+                # Read first line (header)
+                line = re.sub(r'[\n\r]', '', next(file))
+                # Split line in columns
+                columns = [col for col in cls.columns]
 
-            # Loop through all hits
-            for line in file:
-                # Split current line
-                line = line.split(sep)
-                # Define current hit
-                hit = {columns[i]: line[i] for i in range(len(line))}
-                # Store hit
-                hits.append(hit)
+                # Loop through all hits
+                for line in file:
+                    # Split current line
+                    line = line.split(sep)
+                    # Define current hit
+                    hit = {columns[i]: line[i] for i in range(len(line))}
+                    # Store hit
+                    hits.append(hit)
 
         # Return hits list
         return hits

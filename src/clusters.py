@@ -150,7 +150,9 @@ class MGnifam(Cluster):
             'seq_scores': list(self.seq_scores),
             'dom_scores': list(self.dom_scores),
             'name': self.name,
-            'path': self.path
+            'path': self.path,
+            'created': self.created,
+            'updated': self.updated
         }
 
     @classmethod
@@ -166,7 +168,7 @@ class MGnifam(Cluster):
         return cast(match.group(1))
 
     @classmethod
-    def parse_acc(cls, line, default=''):
+    def parse_accession(cls, line, default=''):
         return cls.parse_param(line=line, param='AC', default=default)
 
     @classmethod
@@ -178,7 +180,7 @@ class MGnifam(Cluster):
         return cls.parse_param(line=line, param='DE', default=default)
 
     @classmethod
-    def parse_auth(cls, line, default=''):
+    def parse_author(cls, line, default=''):
         return cls.parse_param(line=line, param='AU', default=default)
 
     @classmethod
@@ -227,7 +229,7 @@ class MGnifam(Cluster):
         is_float = r'[+-]?[0-9]+\.[0-9]+'
         # Retrieve scores
         scores = cls.parse_param(
-            line=line, param='TC', default='', cast=str,
+            line=line, param=param, default='', cast=str,
             value='({0:s}\s+{0:s})[;]?'.format(is_float)
         )
         # Case no score has been found
@@ -272,9 +274,9 @@ class MGnifam(Cluster):
                 # Case line is cluster accession
                 params['accession'] = cls.parse_accession(line, params['accession'])
                 # Case line is id
-                params['id'] = cls.parse_id(line, params['acc'])
+                params['id'] = cls.parse_id(line, params['id'])
                 # Case line is author name
-                params['author'] = cls.parse_author(line, params['auth'])
+                params['author'] = cls.parse_author(line, params['author'])
                 # Retrieve name and version out pf source line
                 params['name'] = cls.parse_name(line, params['name'])
                 params['version'] = cls.parse_version(line, params['version'])
@@ -344,7 +346,7 @@ class MGnifam(Cluster):
             ]))
 
         # Load HMM model file
-        hmm_model = HMM.from_file(self.model_path)
+        hmm_model = HMM.from_file(self.hmm_path)
         # Check HMM model name
         if not hmm_model.name:
             # Raise exception
@@ -357,23 +359,23 @@ class MGnifam(Cluster):
         # Load SEED alignment
         seed_msa = MSA.from_aln(self.seed_path)
         # Check SEED alignment file
-        if seed_msa.is_empty():
+        if seed_msa.is_empty:
             # Raise exception
             raise ValueError('SEED alignment shape is not valid')
 
         # Check ALIGN alignment file
         align_msa = MSA.from_aln(self.align_path)
         # Check ALIGN file
-        if align_msa.is_empty():
+        if align_msa.is_empty:
             # Raise exception
             raise ValueError('ALIGN alignment shape is not valid')
 
         # Check HITS.tsv file
         hits = Domtblout.hits_from_tsv(self.hits_path)
-        # Case domain hits list is empty
-        if not len(hits):
-            # Raise exception
-            raise ValueError('HITS list shape is empty')
+        # # Case domain hits list is empty
+        # if not len(hits):
+        #     # Raise exception
+        #     raise ValueError('HITS list shape is empty')
 
         # Load cluster into database
         db.load_cluster(

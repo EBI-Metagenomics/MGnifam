@@ -35,8 +35,6 @@ Note that `mgseed.pl` either searches for intrinsically disordered regions
 which, if found, makes the cluster to be discarder, i.e. put into `BIAS/`
 directory.
 
-*TODO* Implement `mgseed.pl` as a python module, integrate it with bsub.
-
 ### 3. HMM creation
 
 Afterwards, from each seed alignment previously created, an HMM is developed
@@ -72,10 +70,6 @@ Note that mean batch size should be in the order of 1/10 with respect to
 initial batch size. However, there will probably be more than 10 clusters,
 hence the `Build/` directory will probably be (much) greater than a randomly
 picked batch.
-
-*TODO* Automatic seed trimming must be integrated.
-
-*TODO* Non redundancy must be integrated.
 
 ### 5. Build against MGnifam
 
@@ -230,6 +224,9 @@ allocate a reasonable amount of memory to the main process and limiting the
 number of parallel computations (batch size) to a number between 10 and 100
 thousands.
 
+**NOTE** actually single release script is not available: pipeline is split in
+two files: `src/pipeline/build.py` and `src.pipeline.load.py`
+
 **Requirements**
 
 - python >= 3.7.x
@@ -249,6 +246,8 @@ subprocesses (passing a properly formatted JSON file to
 `--environ_path [ENVIRON_PATH]` option).
 
 **Usage**
+
+Building new possible MGnifam entries
 
 ```
 release200.py [-h] -o RELEASE_PATH -i INPUT_PATH [INPUT_PATH ...]
@@ -271,3 +270,25 @@ release200.py [-h] -o RELEASE_PATH -i INPUT_PATH [INPUT_PATH ...]
                      [--cluster_type CLUSTER_TYPE] [--walltime WALLTIME]
                      [--environ_path ENVIRON_PATH]
 ```
+
+Loading and checking MGnifam entries into the database:
+```
+
+```
+
+**TODOs**
+
+1. Check build results
+
+  1. Check that generated alignments, eithed `SEED.aln` and `ALIGN.aln` are
+  looking good.
+
+2. Finalize load pipeline
+
+  1. Load HMM scores in MGnifam database, such as `viterbi` and `msv` (update
+    `src/hmm/hmm.py` class): currently empty fields get loaded
+
+  2. Test hmmscan procedure: are passing entries looking good?
+
+  3. Integrate fragmentation test (should this be done a priori, during
+  automatic SEED alignment? Should it be extended to ALIGN alignment?)

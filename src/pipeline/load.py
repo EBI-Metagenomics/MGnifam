@@ -1,20 +1,25 @@
-# from src.scheduler import LSFScheduler, LocalScheduler
+from src.pipeline.pipeline import Pipeline
+from src.pipeline.build import parse_env_json
 from src.hmm.hmmer import Tblout, Domtblout
 from src.hmm.hmmpress import HMMPress
 from src.hmm.hmmemit import HMMEmit
+from src.hmm.hmmscan import HMMScan
 from src.sequences import fasta_iter
-from src.mgnifam import Cluster
-
+from src.database import MGnifam as MGDatabase
+from src.database import Pfam as PFDatabase
+from src.clusters import MGnifam as MGCluster
+# from src.clusters import PFam as PFCluster
 from subprocess import CalledProcessError
 from tempfile import mkstemp
 from glob import glob, iglob
 from time import time
 import argparse
 import shutil
+import sys
 import os
 
 
-class Load(object):
+class Load(Pipeline):
     """ Load MGnifam relese into database
 
     Starting from a build directory, loads each new MGnifam cluster and
@@ -26,6 +31,7 @@ class Load(object):
         self, mgnifam_db, pfam_db,
         hmmpress_cmd=['hmmpress'],
         hmmemit_cmd=['hmmemit'],
+        hmmscan_cmd=['hmmscan'],
         env=os.environ
     ):
         # Store databases
@@ -34,6 +40,7 @@ class Load(object):
         # Define scripts instances
         self.hmmpress = HMMPress(cmd=hmmpress_cmd, env=env)
         self.hmmemit = HMMEmit(cmd=hmmemit_cmd, env=env)
+        self.hmmscan = HMMScan(cmd=hmmscan_cmd, env=env)
         # Store environmental variables
         self.env = env
 
@@ -61,48 +68,98 @@ class Load(object):
             # Connect to database
             self.mgnifam_db.connect()
 
-            # Load each cluster in database
+            # Load each input cluster in database
             self.load_clusters(
                 clusters_iter=clusters_iter,
+                mgnifam_version=mgnifam_version,
                 verbose=verbose
             )
 
             # Initialize release directory
-            self.init_dir(
-                release_path=release_path
-            )
+            self.init_release(clusters_path=release_path)
 
             # Retrieve MGnifam clusters
-            mgnifam_dict = self.retrieve_clusters(
-                release_path=release_path,
-                verbose=verbose
-            )
-            # TODO Retrieve MGnifam clusters domain scores
-            # TODO Retrieve MGnifam clusters sequence scores
-
-            # Make MGnifam consensus
-            self.make_consensus(
+            mgnifam_dict, hmm_len, seed_len, align_len = self.retrieve_clusters(
                 clusters_path=release_path,
+                db=self.mgnifam_db,
                 verbose=verbose
             )
 
-            # Make MGnifam HMM model
-            self.prepare_scan(
+            # Initialize sequence scores dict(accession: (TC, NC, GA))
+            sequence_scores = dict()
+            # Initialize domain scores dicy(accession: (TC, NC, GA))
+            domain_scores = dict()
+            # Loop through each cluster in MGnifam
+            for cluster_acc, cluster in mgnifam_dict.items():
+                # Update sequence scores
+                sequence_scores.setdefault(cluster_acc, cluster.seq_scores)
+                # Update domain scores
+                domain_scores.setdefault(cluster_acc, cluster.dom_scores)
+
+            # Check MGnifam clusters against each other
+            mgnifam_dict, discard_dict = self.check_mgnifam(
+                # Store clusters directories into release folder
                 clusters_path=release_path,
+                # Dictionary mapping cluster accession to MGnifam cluster
+                mgnifam_dict=mgnifam_dict,
+                # Dictionary mapping cluster accession to sequence scores
+                sequence_scores=sequence_scores,
+                # Dictionary mapping cluster accession to domain scores
+                domain_scores=domain_scores,
+                # Dictionary mapping cluster accession to SEED alignment length
+                seed_len=seed_len,
+                # Whether to print out verbose output
                 verbose=verbose
             )
 
-            # Make MGnifam scan
-            tblout_path, domtblout_path = self.make_scan(
-                clusters_path=release_path,
-                verbose=verbose
-            )
-
-            # TODO Parse MGnifam scan
-            # TODO Kill clusters intercepting
+            # Loop through all discarded clusters
+            for cluster in discard_dict.values():
+                # Check that cluster folder exists
+                if os.path.isdir(cluster.path):
+                    # Remove cluster directory
+                    shutil.rmtree(cluster.path)
 
             # Raise exception
             raise Exception()
+
+            # Retrieve Pfam clusters
+            pfam_dict, _, _, _ = self.retrieve_clusters(
+                clusters_path=release_path,
+                db=self.pfam_db,
+                verbose=verbose
+            )
+
+            # Loop through each cluster in Pfam
+            for cluster_acc, cluster in pfam_dict.items():
+                # Update sequence scores
+                sequence_scores.setdefault(cluster_acc, cluster.seq_scores)
+                # Update domain scores
+                domain_scores.setdefault(cluster_acc, cluster.dom_scores)
+
+            # check MGnifam clusters against the ones in Pfam
+            self.check_pfam(
+                # Store clusters directories into release folder
+                clusters_path=release_path,
+                # Dictionary mapping cluster accession to MGnifam cluster
+                mgnifam_dict=mgnifam_dict,
+                # Dictionary mapping cluster accession to Pfam cluster
+                pfam_dict=pfam_dict,
+                # Dictionary mapping cluster accession to sequence scores
+                sequence_scores=sequence_scores,
+                # Dictionary mapping cluster accession to domain scores
+                domain_scores=domain_scores,
+                # Whether to print out verbose output
+                verbose=verbose
+            )
+
+            # Loop through all discarded clusters
+            for cluster in discard_dict.values():
+                # Kill entry: move it from active MGnifam to dead ones
+                self.mgnifam_db.kill_cluster(accession=cluster.accession)
+                # Check that cluster folder exists
+                if os.path.isdir(cluster.path):
+                    # Remove cluster directory
+                    shutil.rmtree(cluster.path)
 
         # If any exception got catched, rollback
         except Exception:
@@ -118,8 +175,9 @@ class Load(object):
         """ Load clusters into MGnifam database
 
         Args
-        clusters (dict)     Dict of clusters retrieved from directory
-        verbose (bool)      Whether to print verbose output
+        clusters_iter (list)    Iterator though cluster directories
+        mgnifam_version (str)   MGnifam version to set in given clusters
+        verbose (bool)          Whether to print verbose output
         """
         # Verbose
         if verbose:
@@ -129,22 +187,38 @@ class Load(object):
             print('Loading {:d}'.format(len(clusters_iter)), end=' ')
             print('clusters to MGnifam database...')
 
+        # Define next cluster accession
+        next_accession = 0
         # Loop through each cluster path
         for cluster_path in clusters_iter:
             # Try loading cluster into database
             try:
                 # Parse cluster from directory
-                cluster = Cluster.from_dir(cluster_path)
-                # Load cluster to MGnifam database
-                cluster.to_mgnifam(self.mgnifam_db)
+                cluster = MGCluster.from_dir(cluster_path)
+                # Set creation and update times to now
+                cluster.created = cluster.updated = int(time())
+                # Case cluster accession is not set
+                if not cluster.accession_ and next_accession:
+                    # Set next accession
+                    cluster.accession = '{:05d}'.format(next_accession)
 
+                # Load cluster to MGnifam database
+                cluster.to_database(self.mgnifam_db)
+
+                # Update next available accession
+                next_accession = int(cluster.accession_) + 1
+
+            # Catch any exception
+            except Exception:
+                # Raise any exception
+                raise
             # Case value error has been found
             except ValueError as err:
                 # Verbose
                 if verbose:
                     # Print discarded cluster
-                    print('Cluster {:s} discarded:'.format(cluster.name))
-                    print(err.message.strip())
+                    print('Cluster {:s} discarded:'.format(cluster.name), end=' ')
+                    print(str(err).strip())
                 # Go to next iteration
                 pass
 
@@ -155,7 +229,7 @@ class Load(object):
             # Show execution time
             print('...done in {:.0f} seconds'.format(time_end - time_beg))
 
-    def init_release(clusters_path):
+    def init_release(self, clusters_path):
         """ Initialize release directory structure
 
         Args
@@ -166,38 +240,50 @@ class Load(object):
             # Try making release directory
             os.mkdir(clusters_path)
 
-    def retrieve_clusters(self, clusters_path, verbose=False):
+    def retrieve_clusters(self, clusters_path, db, verbose=False):
         """ Retrieve all MGnifam clusters
 
-        Loop through each accession in MGnifam dataset, retrieve it and make
-        cluster directory. Fill directory with HMM.model file.
+        Loop through each accession in MGnifam/Pfam dataset, retrieve it and
+        make cluster directory. Fill directory with `HMM.model` file.
+
+        Note that db instance must have `get_accessions`, `get_cluster` and
+        `make_hmm_model` methods.
 
         Args
         clusters_path (str)         Path to release directory
+        db (Database)               Database instance to use (MGnifam or Pfam)
         verbose (bool)              Whether to print out verbose log
 
         Return
-        (dict)                      Dictionary mapping cluster names to
-                                    clusters objects
+        (dict)                      Dictionary mapping cluster accession
+                                    numbers to clusters objects
+        (dict)                      Dictionary mapping cluster accession
+                                    numbers to HMM lengths
+        (dict)                      Dictionary mapping cluster accession
+                                    numbers to SEED alignments length
+        (dict)                      Dictionary mapping cluster accession
+                                    numbers to ALIGN alignments length
         """
-        # Set database reference
-        db = self.mgnifam_db
+        # # Set database reference
+        # db = self.mgnifam_db
 
         # Verbose
         if verbose:
             # Initialize timers
             time_beg, time_end = time(), 0.0
             # Show execution start
-            print('Retrieving MGnifam clusters...', end=' ')
+            print('Retrieving MGnifam clusters...')
 
         # Initialize clusters dictionary
         clusters_dict = dict()
+        # Initialize HMM model and alignemnts lengths dictionaries
+        hmm_len, seed_len, align_len = dict(), dict(), dict()
         # Retrieve all sequence accessions from MGnifam database
         clusters_acc = db.get_accessions()
         # Loop through all retrieved accessions
-        for acc in clusters_acc:
+        for cluster_acc in clusters_acc:
             # Define cluster path
-            cluster_path = os.path.join(clusters_path, acc)
+            cluster_path = os.path.join(clusters_path, cluster_acc)
 
             # Try making cluster directory
             try:
@@ -206,35 +292,54 @@ class Load(object):
                     # Make cluster directory
                     os.mkdir(cluster_path)
 
+                # Retrieve cluster results and items lengths
+                retrieved = db.get_cluster(
+                    acccession=cluster_acc
+                )
                 # Retrieve cluster
-                cluster = db.get_cluster(acccession=acc)
+                cluster = retrieved[0]
+
+                # # Make DESC file
+                # cluster.to_desc()
+
+                # # Define HMM model path
+                # model_path = os.path.join(cluster_path, 'HMM.model')
+
                 # Set cluster path
                 cluster.path = cluster_path
-                # Make DESC file
-                cluster.to_desc()
-
-                # Define HMM model path
-                model_path = os.path.join(cluster_path, 'HMM.model')
                 # Make HMM model
-                db.make_hmm_model(accession=acc, path=model_path)
+                db.make_hmm_model(
+                    accession=cluster_acc,
+                    path=cluster.model_path
+                )
 
+                # Store HMM length
+                hmm_len.setdefault(cluster_acc, int(retrieved[1]))
+                # Store SEED alignment length (number of sequences)
+                seed_len.setdefault(cluster_acc, int(retrieved[2]))
+                # Store ALIGN alignment length
+                align_len.setdefault(cluster_acc, int(retrieved[3]))
                 # Append cluster to clusters dictionary
-                clusters_dict.setdefault(acc, cluster)
+                clusters_dict.setdefault(cluster_acc, cluster)
 
             # Catch exceptions
             except Exception:
+                # Verbose
+                if verbose:
+                    # Print cluster discarded
+                    print('  Could not retrieve {:s} cluster'.format(cluster_acc))
                 # Discard cluster directory
-                os.remove(cluster_path)
+                shutil.rmtree(cluster_path)
 
         # Verbose
         if verbose:
             # Update timers
             time_end = time()
             # Show execution time
-            print('done in {:0f} seconds'.format(time_end -  time_beg))
+            print('...done in {:0f} seconds'.format(time_end -  time_beg))
 
         # Return clusters dictionary
-        return clusters_dict
+        return clusters_dict, hmm_len, seed_len, align_len
 
     def make_consensus(self, clusters_path, verbose=False):
         """ Generate consensus FASTA file
@@ -248,7 +353,7 @@ class Load(object):
         verbose (bool)              Whether to print verbose output
         """
         # Define HMM models iterator
-        models_iter = glob(os.path.join(clusters_path, 'MGYF*', 'HMM.model'))
+        models_iter = glob(os.path.join(clusters_path, '*', 'HMM.model'))
 
         # Verbose
         if verbose:
@@ -324,7 +429,7 @@ class Load(object):
                                     errors during hmmpress execution
         """
         # Define clusters HMM model iterator
-        models_iter = glob(os.path.join(clusters_path, 'MGYF*', 'HMM.model'))
+        models_iter = glob(os.path.join(clusters_path, '*', 'HMM.model'))
 
         # Verbose
         if verbose:
@@ -489,9 +594,17 @@ class Load(object):
 
         Return
         (dict)                  Dictionary mapping cluster accession numbers
-                                (keys) to set of other intersecting cluster
-                                accession numbers (values)
+                                (keys) to list of sequence hits (values)
+        (dict)                  Dictionary mapping cluster accession numbers
+                                (keys) to list of domain hits (values)
         """
+        # Verbose
+        if verbose:
+            # Initialize timers
+            time_beg, time_end = time(), 0.0
+            # Show execution start
+            print('Parsing sequnece and domain hits...', end=' ')
+
         # Parse tblout
         tblout = Tblout(tblout_path)
         # Retireve hits
@@ -502,13 +615,272 @@ class Load(object):
         # Retrieve hits
         domain_hits = domtblout.get_hits(scores=domain_scores)
 
-        # # Keep only hits in both sequences and domains
-        # query_names = set(sequence_hits.keys()) & set(domain_hits.keys())
-        # # Loop through each query name
-        # for query_name in query_names:
-        #     # Retrieve each domain hit
-        #     for
-        raise NotImplementedError
+        # Remove tblout and domtblout temporary files
+        os.unlink(tblout_path), os.unlink(domtblout_path)
+
+        # Verbose
+        if verbose:
+            # Update timers
+            time_end = time()
+            # Show execution time
+            print('done on {.0f} seconds'.format(time_end - time_beg))
+
+        # Return either sequence and domain hits
+        return sequence_hits, domain_hits
+
+    def check_mgnifam(self, clusters_path, mgnifam_dict, sequence_scores, domain_scores, seed_len, verbose=False):
+        """ Check MGnifam clusters against each other
+
+        Search MGnifam clusters against each other: first, generates consensus
+        sequences fasta file for each cluster, which will be merged into a
+        single fasta file whose sequence accession number are cluster accession
+        numbers themselves, and a single HMM library by merging all HMM models
+        retrieved from MGnifam database.
+
+        Then, parses results: if there is a cluster whose SEED alignment
+        is lower than half with respect to SEED alignment of another one, and
+        those two have at least one significan intersection, then remove the
+        former one.
+
+        Args
+        clusters_path (str)     Path to directory where clusters will be stored
+        mgnifam_dict (dict)     Dictionary mapping MGnifam cluster accession
+                                numbers to MGnifam cluster instances
+        sequence_scores (dict)  Dictionary associating cluster accession
+                                numbers to `(TC, NC, GA)` sequence scores
+        domain_scores (dict)    Dictionary associating cluster accession
+                                numbers to `(TC, NC, GA)` domain scores
+        seed_len (dict)         Dictionary associating cluster accession
+                                numbers to their SEED alignment length
+        verbose (bool)          Whether to print out verbose log
+
+        Return
+        (dict)                  Dictionary mapping MGnifam cluster accession
+                                numbers to kept MGnifam cluster instances
+        (dict)                  Dictionary mapping MGnifam cluster accession
+                                numbers to discarded MGnifam cluster instances
+        """
+        # Verbose
+        if verbose:
+            # Initialize timers
+            time_beg, time_end = time(), 0.0
+
+        # Make consensus out of MGnifam dict
+        self.make_consensus(clusters_path=clusters_path, verbose=verbose)
+
+        # Prepare hmmscan
+        self.prepare_scan(clusters_path=clusters_path, verbose=verbose)
+
+        # Make MGnifam scan
+        tblout_path, domtblout_path = self.make_scan(
+            clusters_path=clusters_path,
+            verbose=verbose
+        )
+
+        # Parse MGnifam scan
+        sequence_hits, domain_hits = self.parse_scan(
+            # Path to sequence hits file
+            tblout_path=tblout_path,
+            # Path to domain hits file
+            domtblout_path=domtblout_path,
+            # Significant sequences scores
+            sequence_scores=sequence_scores,
+            # Significant domain scores
+            domain_scores=domain_scores
+        )
+
+        # Define discarded clusters dict(accession: cluster)
+        discard_dict = dict()
+        # Make a set of cluster accessions, ordered according to SEED size
+        clusters_acc = sorted(seed_len.keys(), key=seed_len.get)
+        # Loop through each cluster accession (query name) in domains hit
+        for cluster_acc in clusters_acc:
+            # Retrieve hits associated to current cluster accession
+            cluster_hits = domain_hits.get(cluster_acc, [])
+            # Case current accession has not in sequence hits
+            if not sequence_hits.get(cluster_acc, []):
+                # Go to next iteration
+                continue
+
+            # Case current cluster has been discarded
+            if cluster_acc in set(discard_dict.keys()):
+                # Skip execution, go to next iteration
+                continue
+
+            # Go through each target name (other cluster accession number)
+            for hit in cluster_hits:
+                # Define target accession
+                target_acc = hit.get('target_name')
+                # Case target accession equals current cluster accession
+                if target_acc == cluster_acc:
+                    # Go to next iteration
+                    continue
+
+                # Case target cluster has already been discarded
+                if target_acc in set(discard_dict.keys()):
+                    # Skip execution, go to next iteration
+                    continue
+
+                # Define current cluster SEED length
+                cluster_seed_len = seed_len.get(cluster_acc, 0)
+                # Define target cluster SEED length
+                target_seed_len = seed_len.get(target_acc, 0)
+                # Check case target cluster SEED aligment is big enough
+                if target_seed_len > (cluster_seed_len / 2):
+                    # Keep it, go to next iteration
+                    continue
+
+                # Retrieve current target cluster
+                target_cluster = mgnifam_dict.pop(target_acc)
+                # Move target cluster to discarded cluster dictionary
+                discard_dict.setdefault(target_acc, target_cluster)
+
+        # Verbose
+        if verbose:
+            # Define total number of clusters
+            num_clusters = len(mgnifam_dict) + len(discard_dict)
+            # Show number of checked clusters
+            print('Checking {:d} clusters against MGnifam...'.format(num_clusters), end=' ')
+
+            # Update timers
+            time_end = time()
+            # Show execution time
+            print('done in {:.0f} sceonds:'.format(time_end - time_beg))
+
+            # Show number of kept and number of discarded clusters
+            print('  {:d} clusters have been kept'.format(len(mgnifam_dict)))
+            print('  {:d} clusters have beed discarded'.format(len(discard_dict)))
+
+        # Return either kept and discarded dictionaries cluster
+        return mgnifam_dict, discard_dict
+
+    def check_pfam(self, clusters_path, mgnifam_dict, pfam_dict, sequence_scores, domain_scores, verbose=False):
+        """ Check MGnifam clusters against Pfam ones
+
+        Similar to MGnifam-MGnifam checks, it discards each cluster with at
+        least one intersection with Pfam, independently of SEED alignment size.
+
+        Args
+        clusters_path (str)     Path to directory where clusters will be stored
+        mgnifam_dict (dict)     Dictionary mapping MGnifam cluster accession
+                                numbers to MGnifam cluster instances
+        pfam_dict (dict)        Dictionary mapping Pfam cluster accession
+                                numbers to Pfam cluster instances
+        sequence_scores (dict)  Dictionary associating cluster accession
+                                numbers to `(TC, NC, GA)` sequence scores
+        domain_scores (dict)    Dictionary associating cluster accession
+                                numbers to `(TC, NC, GA)` domain scores
+        verbose (bool)          Whether to print out verbose log
+
+        Return
+        (dict)                  Dictionary mapping MGnifam cluster accession
+                                numbers to kept MGnifam cluster instances
+        (dict)                  Dictionary mapping MGnifam cluster accession
+                                numbers to discarded MGnifam cluster instances
+        """
+        # Verbose
+        if verbose:
+            # Initialize timers
+            time_beg, time_end = time(), 0.0
+
+        # Make consensus out of MGnifam dict
+        self.make_consensus(clusters_path=clusters_path, verbose=verbose)
+
+        # Prepare hmmscan
+        self.prepare_scan(clusters_path=clusters_path, verbose=verbose)
+
+        # Make MGnifam scan
+        tblout_path, domtblout_path = self.make_scan(
+            clusters_path=clusters_path,
+            verbose=verbose
+        )
+
+        # Parse MGnifam scan
+        sequence_hits, domain_hits = self.parse_scan(
+            # Path to sequence hits file
+            tblout_path=tblout_path,
+            # Path to domain hits file
+            domtblout_path=domtblout_path,
+            # Significant sequences scores
+            sequence_scores=sequence_scores,
+            # Significant domain scores
+            domain_scores=domain_scores
+        )
+
+        # Define discarded clusters dict(accession: cluster)
+        discard_dict = dict()
+        # Define clusters dictionary by merging mgnifam and pfam ones
+        clusters_dict = dict(**mgnifam_dict, **pfam_dict)
+        # Loop through each cluster accession (query name) in domains hit
+        for cluster_acc, cluster in clusters_dict.items():
+            # Retrieve hits associated to current cluster accession
+            cluster_hits = domain_hits.get(cluster_acc, [])
+            # Case current accession has not in sequence hits
+            if not sequence_hits.get(cluster_acc, []):
+                # Go to next iteration
+                continue
+
+            # Case current cluster has been discarded
+            if cluster_acc in set(discard_dict.keys()):
+                # Skip execution, go to next iteration
+                continue
+
+            # Go through each target name (other cluster accession number)
+            for hit in cluster_hits:
+                # Define target accession
+                target_acc = hit.get('target_name')
+                # Case target accession equals current cluster accession
+                if target_acc == cluster_acc:
+                    # Go to next iteration
+                    continue
+
+                # Case target cluster has already been discarded
+                if target_acc in set(discard_dict.keys()):
+                    # Skip execution, go to next iteration
+                    continue
+
+                # Check if current cluster is a Pfam one
+                cluster_is_pfam = cluster_acc in set(pfam_dict.keys())
+                # Check if target cluster is a Pfam one
+                target_is_pfam = target_acc in set(pfam_dict.keys())
+                # Case current and target clusters are both in Pfam
+                if cluster_is_pfam and target_is_pfam:
+                    # TODO Raise warning if two Pfam cluster intersect
+
+                    # Skip execution, go to next iteration
+                    continue
+
+                # Case the current cluster hits Pfam
+                if not cluster_is_pfam:
+                    # Remove cluster from mgnifam dictionary
+                    cluster = mgnifam_dict.pop(cluster_acc)
+
+                # Case target cluster hits Pfam
+                if not target_is_pfam:
+                    # Remove cluster from mgnifam dictionary
+                    cluster = mgnifam_dict.pop(target_acc)
+
+                # Move removed MGnifam cluster to discarded clusters dictionary
+                discard_dict.setdefault(cluster.accession, cluster)
+
+        # Verbose
+        if verbose:
+            # Define total number of clusters
+            num_clusters = len(mgnifam_dict) + len(discard_dict)
+            # Show number of checked clusters
+            print('Checking {:d} clusters against Pfam...'.format(num_clusters), end=' ')
+
+            # Update timers
+            time_end = time()
+            # Show execution time
+            print('done in {:.0f} sceonds:'.format(time_end - time_beg))
+
+            # Show number of kept and number of discarded clusters
+            print('  {:d} clusters have been kept'.format(len(mgnifam_dict)))
+            print('  {:d} clusters have beed discarded'.format(len(discard_dict)))
+
+        # Return either kept and discarded dictionaries cluster
+        return mgnifam_dict, discard_dict
 
 
 # Command line execution
@@ -518,7 +890,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Build MGnifam clusters')
     # Define path to input clusters files
     parser.add_argument(
-        '-i', '--in_path', nargs='+', type=str, required=True,
+        '-i', '--in_path', nargs='+', type=str, default=[],
         help='Path to input cluster directories'
     )
     # Define path to release directory
@@ -526,91 +898,11 @@ if __name__ == '__main__':
         '-o', '--out_path', type=str, required=True,
         help='Path to release directory'
     )
-    # # Define output path
-    # parser.add_argument(
-    #     '-o', '--out_path', type=str, required=True,
-    #     help='Path to output directory'
-    # )
-    # # Define author name
-    # parser.add_argument(
-    #     '-a', '--author_name', type=str, default='Anonymous',
-    #     help='Name of the user running MGnifam build pipeline'
-    # )
-    # # Wether to shuffle input or not
-    # parser.add_argument(
-    #     '--shuffle', type=int, default=0,
-    #     help='Whether to shuffle input cluster names or not'
-    # )
-    # # Define batch size
-    # parser.add_argument(
-    #     '--batch_size', type=int, default=100,
-    #     help='Number of clusters to make at each iteration'
-    # )
-    # # Define maximum number of clusters to make
-    # parser.add_argument(
-    #     '--max_clusters', type=int, default=0,
-    #     help='Maximum number of clusters to make'
-    # )
-    # # Define path to LinClust clusters file(s)
-    # parser.add_argument(
-    #     '--linclust_path', nargs='+', type=str, default=glob(LINCLUST_PATH),
-    #     help='Path to LinClust clusters file(s)'
-    # )
-    # # Define path to MGnifam file(s)
-    # parser.add_argument(
-    #     '--mgnifam_path', nargs='+', type=str, default=glob(MGNIFAM_PATH),
-    #     help='Path to MGnifam file(s)'
-    # )
-    # # Define MGnifam width (maximum sequence length)
-    # parser.add_argument(
-    #     '--mgnifam_width', type=int, required=False,
-    #     help='Maximum sequence length in MGnifam dataset'
-    # )
-    # # Define MGnifam height (total number of sequences)
-    # parser.add_argument(
-    #     '--mgnifam_height', type=int, required=False,
-    #     help='Total number of sequences in MGnifam dataset'
-    # )
-    # # Define path to UniProt file(s)
-    # parser.add_argument(
-    #     '--uniprot_path', nargs='+', type=str, default=glob(UNIPROT_PATH),
-    #     help='Path to UniProt file(s)'
-    # )
-    # # Define UniProt width (maximum sequence length)
-    # parser.add_argument(
-    #     '--uniprot_width', type=int, required=False,
-    #     help='Maximum sequence length in UniProt dataset'
-    # )
-    # # Define UniProt height (total number of sequences)
-    # parser.add_argument(
-    #     '--uniprot_height', type=int, required=False,
-    #     help='Total number of sequences in UniProt dataset'
-    # )
-    # # Define MobiDB executable
-    # parser.add_argument(
-    #     '--mobidb_cmd', nargs='+', type=str, default=['mobidb_lite.py'],
-    #     help='MobiDB Lite disorder predictor executable'
-    # )
-    # # Define Muscle executable
-    # parser.add_argument(
-    #     '--muscle_cmd', nargs='+', type=str, default=['muscle'],
-    #     help='Muscle multiple sequence aligner executable'
-    # )
-    # # Define hmmsearch executable
-    # parser.add_argument(
-    #     '--hmmsearch_cmd', nargs='+', type=str, default=['hmmsearch'],
-    #     help='HMMER3 search executable'
-    # )
-    # # Define hmmbuild executable
-    # parser.add_argument(
-    #     '--hmmbuild_cmd', nargs='+', type=str, default=['hmmbuild'],
-    #     help='HMMER3 build executable'
-    # )
-    # # Define hmmalign executable
-    # parser.add_argument(
-    #     '--hmmalign_cmd', nargs='+', type=str, default=['hmmalign'],
-    #     help='HMMER3 align executable'
-    # )
+    # Define MGnifam version
+    parser.add_argument(
+        '-V', '--version', type=str, default='',
+        help='MGnifam release name'
+    )
     # Define hmmpress executable
     parser.add_argument(
         '--hmmpress_cmd', nargs='+', type=str, default=['hmmpress'],
@@ -621,21 +913,27 @@ if __name__ == '__main__':
         '--hmmemit_cmd', nargs='+', type=str, default=['hmmemit'],
         help='HMMER3 emit executable'
     )
+    # Define hmmscan executable
+    parser.add_argument(
+        '--hmmscan_cmd', nargs='+', type=str, default=['hmmscan'],
+        help='HMMER3 scan executable'
+    )
     # Whether to print verbose output
     parser.add_argument(
         '-v', '--verbose', type=int, default=1,
         help='Print verbose output'
     )
-    # Define E-value significance threshold for both MGnifam and Pfam
-    parser.add_argument(
-        '-e', '--e_value', type=float, default=0.01,
-        help='E-value threhsold for both UniProt and MGnifam comparisons'
-    )
+    # # Define E-value significance threshold for both MGnifam and Pfam
+    # parser.add_argument(
+    #     '-e', '--e_value', type=float, default=0.01,
+    #     help='E-value threhsold for both UniProt and MGnifam comparisons'
+    # )
     # Define environmental variables .json file
     parser.add_argument(
         '--env_path', type=str, required=False,
         help='Path to .json file holding environmental variables'
     )
+
     # Define MGnifam database options
     group = parser.add_argument_group('MGnifam database options')
     # Add database user
@@ -658,6 +956,9 @@ if __name__ == '__main__':
         '--mgnifam_port', type=str, default=3309,
         help='MGnifam database host'
     )
+
+    # Define Pfam database options
+    group = parser.add_argument_group('Pfam database options')
     # Add database user
     group.add_argument(
         '--pfam_user', type=str, required=True,
@@ -678,87 +979,47 @@ if __name__ == '__main__':
         '--pfam_port', type=str, default=3309,
         help='Pfam database host'
     )
-    # # Define scheduler options
-    # group = parser.add_argument_group('Scheduler options')
-    # # Define schduler type
-    # group.add_argument(
-    #     '-s', '--scheduler_type', type=str, default='LSF',
-    #     help='Type of scheduler to use to distribute parallel processes'
-    # )
-    # # Define minimum number of jobs
-    # group.add_argument(
-    #     '-j', '--min_jobs', type=int, default=0,
-    #     help='Minimum number of parallel processes to keep alive'
-    # )
-    # # Define maximum number of jobs
-    # group.add_argument(
-    #     '-J', '--max_jobs', type=int, default=100,
-    #     help='Maximum number of parallel processes to keep alive'
-    # )
-    # # Define minimum number of cores
-    # group.add_argument(
-    #     '-c', '--min_cores', type=int, default=1,
-    #     help='Minimum number of cores to use per process'
-    # )
-    # # Define maximum number of cores
-    # group.add_argument(
-    #     '-C', '--max_cores', type=int, default=1,
-    #     help='Maximum number of cores to use per process'
-    # )
-    # # Define minimum memory allocable per job
-    # group.add_argument(
-    #     '-m', '--min_memory', type=str, default='2 GB',
-    #     help='Minimum memory allocable per process'
-    # )
-    # # Define maximum memory allocable per job
-    # group.add_argument(
-    #     '-M', '--max_memory', type=str, default='4 GB',
-    #     help='Maximum memory allocable per process'
-    # )
-    # # Define walltime
-    # group.add_argument(
-    #     '-W', '--walltime', type=str, default='02:00',
-    #     help='How long can a process be kept alive'
-    # )
+
     # Retrieve arguments
     args = parser.parse_args()
 
-    # # Initialize scheduler
-    # scheduler = None
-    # # Case scheduler type is LSF
-    # if args.scheduler_type == 'LSF':
-    #     # Define LSF scheduler
-    #     scheduler = LSFScheduler(
-    #         # Define cores boundaries
-    #         min_cores=args.min_cores,
-    #         max_cores=args.max_cores,
-    #         # Define memory boundaries
-    #         min_memory=args.min_memory,
-    #         max_memory=args.max_memory,
-    #         # Debug
-    #         silence_logs='debug',
-    #         # Define walltime
-    #         walltime=args.walltime,
-    #         # Define processes per job
-    #         processes=1
-    #     )
-    # # Case scheduler type is Local
-    # if args.scheduler_type == 'Local':
-    #     # Define Local scheduler
-    #     scheduler = LocalScheduler(
-    #         # Define cores boundaries
-    #         min_cores=args.min_cores,
-    #         max_cores=args.max_cores,
-    #         # Define memory boundaries
-    #         min_memory=args.min_memory,
-    #         max_memory=args.max_memory,
-    #         # Define processes per job
-    #         threads_per_worker=1
-    #     )
-    # # Case no scheduler has been set
-    # if scheduler is None:
-    #     # Raise new error
-    #     raise ValueError(' '.join([
-    #         'scheduler type can be one among `Local` or `LSF`',
-    #         '%s has been chosen instead' % args.scheduler_type
-    #     ]))
+    # Load environmental variables
+    env = os.environ.copy()
+    # Case environmental variable file is set
+    if args.env_path:
+        # Update environmental variables using given file file
+        env = {**env, **parse_env_json(args.env_path)}
+
+    # Make MGnifam database instance
+    mgnifam_db = MGDatabase(
+        user=args.mgnifam_user,
+        password=args.mgnifam_password,
+        host=args.mgnifam_host,
+        port=args.mgnifam_port
+    )
+
+    # Make Pfam database instance
+    pfam_db = PFDatabase(
+        user=args.pfam_user,
+        password=args.pfam_password,
+        host=args.pfam_host,
+        port=args.pfam_port
+    )
+
+    # Initialize new load pipeline
+    pipeline = Load(
+        mgnifam_db=mgnifam_db,
+        pfam_db=pfam_db,
+        hmmpress_cmd=args.hmmpress_cmd,
+        hmmemit_cmd=args.hmmemit_cmd,
+        hmmscan_cmd=args.hmmscan_cmd
+        # mgnifam_e_value=args.e_value
+    )
+
+    # Run pipeline
+    pipeline(
+        release_path=args.out_path,
+        clusters_iter=args.in_path,
+        mgnifam_version=args.version,
+        verbose=args.verbose
+    )
