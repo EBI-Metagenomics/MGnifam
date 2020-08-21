@@ -397,12 +397,12 @@ Pfam database options:
 
 2. Finalize load pipeline
 
-  1. Load HMM scores in MGnifam database, such as `viterbi` and `msv` (update
+  - Load HMM scores in MGnifam database, such as `viterbi` and `msv` (update
     `src/hmm/hmm.py` class): currently empty fields get loaded
 
-  2. Test hmmscan procedure: are passing entries looking good?
+  - Test hmmscan procedure: are passing entries looking good?
 
-  3. Integrate fragmentation test (should this be done a priori, during
+  - Integrate fragmentation test (should this be done a priori, during
   automatic SEED alignment? Should it be extended to ALIGN alignment?)
 
 3. Merge build and load pipelines: just merge `build.py` and `load.py`
