@@ -247,41 +247,153 @@ subprocesses (passing a properly formatted JSON file to
 
 **Usage**
 
-Building new possible MGnifam entries
+Building MGnifam entries
 
 ```
-release200.py [-h] -o RELEASE_PATH -i INPUT_PATH [INPUT_PATH ...]
-                     [--shuffle SHUFFLE] [--batch_size BATCH_SIZE]
-                     [--max_clusters MAX_CLUSTERS]
-                     [--linclust_path LINCLUST_PATH]
-                     [--uniprot_path UNIPROT_PATH]
-                     [--uniprot_height UNIPROT_HEIGHT]
-                     [--uniprot_width UNIPROT_WIDTH]
-                     [--mgnifam_path MGNIFAM_PATH]
-                     [--mgnifam_height MGNIFAM_HEIGHT]
-                     [--mgnifam_width MGNIFAM_WIDTH]
-                     [--mobidb_cmd MOBIDB_CMD [MOBIDB_CMD ...]]
-                     [--muscle_cmd MUSCLE_CMD [MUSCLE_CMD ...]]
-                     [--hmmsearch_cmd HMMSEARCH_CMD [HMMSEARCH_CMD ...]]
-                     [--hmmbuild_cmd HMMBUILD_CMD [HMMBUILD_CMD ...]]
-                     [--hmmalign_cmd HMMALIGN_CMD [HMMALIGN_CMD ...]]
-                     [-v VERBOSE] [-e E_VALUE] [-c CORES] [-m MEMORY]
-                     [-q QUEUE] [--min_jobs MIN_JOBS] [--max_jobs MAX_JOBS]
-                     [--cluster_type CLUSTER_TYPE] [--walltime WALLTIME]
-                     [--environ_path ENVIRON_PATH]
+usage: build.py [-h] -i IN_PATH [IN_PATH ...] -o OUT_PATH [-a AUTHOR_NAME]
+                [--shuffle SHUFFLE] [--batch_size BATCH_SIZE]
+                [--max_clusters MAX_CLUSTERS]
+                [--linclust_path LINCLUST_PATH [LINCLUST_PATH ...]]
+                [--mgnifam_path MGNIFAM_PATH [MGNIFAM_PATH ...]]
+                [--mgnifam_width MGNIFAM_WIDTH]
+                [--mgnifam_height MGNIFAM_HEIGHT]
+                [--uniprot_path UNIPROT_PATH [UNIPROT_PATH ...]]
+                [--uniprot_width UNIPROT_WIDTH]
+                [--uniprot_height UNIPROT_HEIGHT]
+                [--mobidb_cmd MOBIDB_CMD [MOBIDB_CMD ...]]
+                [--muscle_cmd MUSCLE_CMD [MUSCLE_CMD ...]]
+                [--hmmsearch_cmd HMMSEARCH_CMD [HMMSEARCH_CMD ...]]
+                [--hmmbuild_cmd HMMBUILD_CMD [HMMBUILD_CMD ...]]
+                [--hmmalign_cmd HMMALIGN_CMD [HMMALIGN_CMD ...]] [-v VERBOSE]
+                [-e E_VALUE] [--env_path ENV_PATH] [-s SCHEDULER_TYPE]
+                [-j MIN_JOBS] [-J MAX_JOBS] [-c MIN_CORES] [-C MAX_CORES]
+                [-m MIN_MEMORY] [-M MAX_MEMORY] [-W WALLTIME]
+
+Build MGnifam clusters
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -i IN_PATH [IN_PATH ...], --in_path IN_PATH [IN_PATH ...]
+                        Path to input .tsv file(s), cluster name is first
+                        column
+  -o OUT_PATH, --out_path OUT_PATH
+                        Path to output directory
+  -a AUTHOR_NAME, --author_name AUTHOR_NAME
+                        Name of the user running MGnifam build pipeline
+  --shuffle SHUFFLE     Whether to shuffle input cluster names or not
+  --batch_size BATCH_SIZE
+                        Number of clusters to make at each iteration
+  --max_clusters MAX_CLUSTERS
+                        Maximum number of clusters to make
+  --linclust_path LINCLUST_PATH [LINCLUST_PATH ...]
+                        Path to LinClust clusters file(s)
+  --mgnifam_path MGNIFAM_PATH [MGNIFAM_PATH ...]
+                        Path to MGnifam file(s)
+  --mgnifam_width MGNIFAM_WIDTH
+                        Maximum sequence length in MGnifam dataset
+  --mgnifam_height MGNIFAM_HEIGHT
+                        Total number of sequences in MGnifam dataset
+  --uniprot_path UNIPROT_PATH [UNIPROT_PATH ...]
+                        Path to UniProt file(s)
+  --uniprot_width UNIPROT_WIDTH
+                        Maximum sequence length in UniProt dataset
+  --uniprot_height UNIPROT_HEIGHT
+                        Total number of sequences in UniProt dataset
+  --mobidb_cmd MOBIDB_CMD [MOBIDB_CMD ...]
+                        MobiDB Lite disorder predictor executable
+  --muscle_cmd MUSCLE_CMD [MUSCLE_CMD ...]
+                        Muscle multiple sequence aligner executable
+  --hmmsearch_cmd HMMSEARCH_CMD [HMMSEARCH_CMD ...]
+                        HMMER3 search executable
+  --hmmbuild_cmd HMMBUILD_CMD [HMMBUILD_CMD ...]
+                        HMMER3 build executable
+  --hmmalign_cmd HMMALIGN_CMD [HMMALIGN_CMD ...]
+                        HMMER3 align executable
+  -v VERBOSE, --verbose VERBOSE
+                        Print verbose output
+  -e E_VALUE, --e_value E_VALUE
+                        E-value threhsold for both UniProt and MGnifam
+                        comparisons
+  --env_path ENV_PATH   Path to .json file holding environmental variables
+
+Scheduler options:
+  -s SCHEDULER_TYPE, --scheduler_type SCHEDULER_TYPE
+                        Type of scheduler to use to distribute parallel
+                        processes
+  -j MIN_JOBS, --min_jobs MIN_JOBS
+                        Minimum number of parallel processes to keep alive
+  -J MAX_JOBS, --max_jobs MAX_JOBS
+                        Maximum number of parallel processes to keep alive
+  -c MIN_CORES, --min_cores MIN_CORES
+                        Minimum number of cores to use per process
+  -C MAX_CORES, --max_cores MAX_CORES
+                        Maximum number of cores to use per process
+  -m MIN_MEMORY, --min_memory MIN_MEMORY
+                        Minimum memory allocable per process
+  -M MAX_MEMORY, --max_memory MAX_MEMORY
+                        Maximum memory allocable per process
+  -W WALLTIME, --walltime WALLTIME
+                        How long can a process be kept alive
 ```
 
 Loading and checking MGnifam entries into the database:
 ```
+usage: load.py [-h] [-i IN_PATH [IN_PATH ...]] -o OUT_PATH [-V VERSION]
+               [--hmmpress_cmd HMMPRESS_CMD [HMMPRESS_CMD ...]]
+               [--hmmemit_cmd HMMEMIT_CMD [HMMEMIT_CMD ...]]
+               [--hmmscan_cmd HMMSCAN_CMD [HMMSCAN_CMD ...]] [-v VERBOSE]
+               [--env_path ENV_PATH] --mgnifam_user MGNIFAM_USER
+               [--mgnifam_password MGNIFAM_PASSWORD]
+               [--mgnifam_host MGNIFAM_HOST] [--mgnifam_port MGNIFAM_PORT]
+               --pfam_user PFAM_USER [--pfam_password PFAM_PASSWORD]
+               [--pfam_host PFAM_HOST] [--pfam_port PFAM_PORT]
+
+Build MGnifam clusters
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -i IN_PATH [IN_PATH ...], --in_path IN_PATH [IN_PATH ...]
+                        Path to input cluster directories
+  -o OUT_PATH, --out_path OUT_PATH
+                        Path to release directory
+  -V VERSION, --version VERSION
+                        MGnifam release name
+  --hmmpress_cmd HMMPRESS_CMD [HMMPRESS_CMD ...]
+                        HMMER3 press executable
+  --hmmemit_cmd HMMEMIT_CMD [HMMEMIT_CMD ...]
+                        HMMER3 emit executable
+  --hmmscan_cmd HMMSCAN_CMD [HMMSCAN_CMD ...]
+                        HMMER3 scan executable
+  -v VERBOSE, --verbose VERBOSE
+                        Print verbose output
+  --env_path ENV_PATH   Path to .json file holding environmental variables
+
+MGnifam database options:
+  --mgnifam_user MGNIFAM_USER
+                        MGnifam database username
+  --mgnifam_password MGNIFAM_PASSWORD
+                        MGnifam database password
+  --mgnifam_host MGNIFAM_HOST
+                        MGnifam database host
+  --mgnifam_port MGNIFAM_PORT
+                        MGnifam database host
+
+Pfam database options:
+  --pfam_user PFAM_USER
+                        Pfam database username
+  --pfam_password PFAM_PASSWORD
+                        Pfam database password
+  --pfam_host PFAM_HOST
+                        Pfam database host
+  --pfam_port PFAM_PORT
+                        Pfam database host
 
 ```
 
 **TODOs**
 
-1. Check build results
-
-  1. Check that generated alignments, eithed `SEED.aln` and `ALIGN.aln` are
-  looking good.
+1. Check build results: check that generated alignments, eithed `SEED.aln` and
+`ALIGN.aln` are looking good.
 
 2. Finalize load pipeline
 
@@ -292,3 +404,6 @@ Loading and checking MGnifam entries into the database:
 
   3. Integrate fragmentation test (should this be done a priori, during
   automatic SEED alignment? Should it be extended to ALIGN alignment?)
+
+3. Merge build and load pipelines: just merge `build.py` and `load.py`
+pipelines into a single file, using build clusters as load input.
